@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32" shape-rendering="crispEdges">
+<rect width="32" height="32" fill="#142029"/>
+<rect x="1" y="1" width="30" height="30" fill="none" stroke="#9c865e" stroke-width="2"/>
+<!-- Two crossed pixel blades -->
+<path d="M7 5H10V8H13V11H16V14H18V16H16V18H14V16H11V13H8V10H5V7H7Z" fill="#d5d9d0"/>
+<path d="M22 5H25V7H27V10H24V13H21V16H18V18H16V16H14V14H16V11H19V8H22Z" fill="#e7bd7a"/>
+<path d="M16 16H19V19H22V22H25V25H27V28H24V26H21V23H18V20H15V17H16Z" fill="#ae775b"/>
+<path d="M13 16H16V19H13V22H10V25H7V27H5V24H7V21H10V18H13Z" fill="#bba383"/>
+<rect x="13" y="13" width="6" height="6" fill="#efc783"/>
+</svg>
