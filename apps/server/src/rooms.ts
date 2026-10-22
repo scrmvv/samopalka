@@ -1,5 +1,6 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { HEROES, type HeroId, type PlayerPublic, type RoomSnapshot, type RoomStatus } from '@samopalka/shared';
+import { BattleSession, BattleError } from './battle.js';
 
 const CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const RECONNECT_MS = 60_000;
@@ -22,6 +23,7 @@ type Room = {
   status: RoomStatus;
   players: Participant[];
   updatedAt: number;
+  game?: BattleSession;
 };
 
 export class RoomError extends Error {}
@@ -29,7 +31,7 @@ export class RoomError extends Error {}
 export class RoomManager {
   private rooms = new Map<string, Room>();
   private sockets = new Map<string, { code: string; id: string }>();
-  constructor(private readonly notify: (code: string) => void = () => {}, private readonly clock: () => number = Date.now) {}
+  constructor(private readonly notify: (code: string) => void = () => {}, private readonly clock: () => number = Date.now, private readonly onKick?: (socketId: string, reason: string) => void) {}
 
   private code(): string {
     for (let tries = 0; tries < 100; tries++) {
@@ -89,6 +91,7 @@ export class RoomManager {
     return {
       code: r.code, name: r.name, maxPlayers: r.maxPlayers, status: r.status,
       campaign: 'Путь проклятых', updatedAt: r.updatedAt,
+      ...(r.game ? { game: r.game.snapshot() } : {}),
       players: r.players.map((p): PlayerPublic => ({
         id: p.id, nickname: p.nickname, heroId: p.heroId,
         ready: p.ready, connected: p.socketId !== null, isHost: p.id === r.hostId
@@ -127,6 +130,7 @@ export class RoomManager {
       if (oldSocketId) this.sockets.delete(oldSocketId);
       player.socketId = socketId;
       player.disconnectedAt = null;
+      room.game?.reconnected(player.id);
     } else {
       this.requireLobby(room);
       if (room.players.length >= room.maxPlayers) throw new RoomError('В комнате нет свободных мест.');
@@ -193,6 +197,33 @@ export class RoomManager {
       throw new RoomError('Все игроки должны выбрать героя, быть в сети и нажать «Готов».');
     }
     room.status = 'started';
+    room.game = new BattleSession(room.players.map(p => ({ id: p.id, heroId: p.heroId! })), this.clock);
+    this.touch(room);
+    return room.code;
+  }
+
+  private battleMember(socketId: string) {
+    const { room, player } = this.requireMember(socketId);
+    if (room.status !== 'started' || !room.game) throw new RoomError('Сначала начните партию.');
+    // The battle engine never trusts a player ID supplied by the browser.
+    return { room, player, game: room.game };
+  }
+
+  rollDice(socketId: string) {
+    const {room, player, game} = this.battleMember(socketId);
+    try { game.roll(player.id, player.nickname); } catch (e) { if (e instanceof BattleError) throw new RoomError(e.message); throw e; }
+    this.touch(room);
+    return room.code;
+  }
+  selectDice(socketId: string, faceIndex: unknown) {
+    const {room, player, game} = this.battleMember(socketId);
+    try { game.choose(player.id, faceIndex, player.nickname); } catch (e) { if (e instanceof BattleError) throw new RoomError(e.message); throw e; }
+    this.touch(room);
+    return room.code;
+  }
+  passTurn(socketId: string) {
+    const {room, player, game} = this.battleMember(socketId);
+    try { game.pass(player.id, player.nickname); } catch (e) { if (e instanceof BattleError) throw new RoomError(e.message); throw e; }
     this.touch(room);
     return room.code;
   }
@@ -215,6 +246,7 @@ export class RoomManager {
     if (!room || !player || player.socketId !== socketId) return null;
     player.socketId = null;
     player.disconnectedAt = this.clock();
+    room.game?.disconnected(player.id);
     this.touch(room);
     return room.code;
   }
@@ -222,6 +254,7 @@ export class RoomManager {
   private remove(room: Room, player: Participant) {
     if (player.socketId) this.sockets.delete(player.socketId);
     room.players = room.players.filter(p => p.id !== player.id);
+    room.game?.remove(player.id, player.nickname);
     if (room.players.length === 0) {
       this.rooms.delete(room.code);
       this.notify(room.code);
@@ -234,7 +267,22 @@ export class RoomManager {
   }
 
   cleanupDisconnected() {
-    for (const room of this.rooms.values()) {
+    for (const room of [...this.rooms.values()]) {
+      if (room.game) {
+        const before = room.game.snapshot().activePlayerId + ':' + room.game.snapshot().events.at(-1)?.id;
+        const kicks = room.game.tick(
+          id => Boolean(room.players.find(p => p.id === id)?.socketId),
+          id => room.players.find(p => p.id === id)?.nickname ?? 'Игрок'
+        );
+        for (const id of kicks) {
+          const player = room.players.find(p => p.id === id);
+          if (player) {
+            if (player.socketId) this.onKick?.(player.socketId, 'Два хода подряд пропущены.');
+            this.remove(room, player);
+          }
+        }
+        if (room.game.snapshot().activePlayerId + ':' + room.game.snapshot().events.at(-1)?.id !== before) this.touch(room);
+      }
       for (const player of [...room.players]) {
         if (player.socketId === null && player.disconnectedAt !== null && this.clock() - player.disconnectedAt >= RECONNECT_MS) {
           this.remove(room, player);

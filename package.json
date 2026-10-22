@@ -1,14 +1,9 @@
 {
-  "name": "samopalka",
+  "name": "samopalka-stage1",
   "private": true,
   "version": "0.1.0",
-  "workspaces": [
-    "apps/*",
-    "packages/*"
-  ],
-  "engines": {
-    "node": ">=20.19"
-  },
+  "workspaces": ["apps/*", "packages/*"],
+  "engines": {"node": ">=20.19"},
   "scripts": {
     "build": "npm run build -w @samopalka/shared && npm run build -w @samopalka/client && npm run build -w @samopalka/server",
     "start": "npm run start -w @samopalka/server",

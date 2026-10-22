@@ -18,9 +18,12 @@ const manager = new RoomManager(code => {
   const room = manager.snapshot(code);
   if (room) io.to(code).emit('room:state', room);
   else io.to(code).emit('room:closed');
+}, Date.now, (socketId, reason) => {
+  const socket = io.sockets.sockets.get(socketId);
+  if (socket) { socket.emit('room:kicked', reason); setTimeout(() => socket.disconnect(true), 150).unref(); }
 });
 
-app.get('/api/health', (_, res) => res.json({ ok: true, name: 'Самопалка' }));
+app.get('/api/health', (_, res) => res.json({ ok: true, name: 'Самопалка', stage: 2 }));
 app.get('/api/network', (_, res) => {
   const interfaces = Object.values(networkInterfaces()).flatMap(items => items ?? []);
   const addresses = [...new Set(interfaces.filter(ip => ip.family === 'IPv4' && !ip.internal).map(ip => ip.address))];
@@ -88,6 +91,9 @@ io.on('connection', (socket: Socket) => {
     manager.start(socket.id);
     return true;
   }));
+  socket.on('game:roll', (_input, ack: Done) => handle(ack, () => manager.rollDice(socket.id)));
+  socket.on('game:choose', (index, ack: Done) => handle(ack, () => manager.selectDice(socket.id, index)));
+  socket.on('game:pass', (_input, ack: Done) => handle(ack, () => manager.passTurn(socket.id)));
   socket.on('room:leave', (_input, ack: Done) => handle(ack, () => {
     const connection = manager.getConnection(socket.id);
     if (!connection) throw new RoomError('Вы уже вышли из комнаты.');
@@ -99,10 +105,10 @@ io.on('connection', (socket: Socket) => {
   socket.on('disconnect', () => manager.disconnect(socket.id));
 });
 
-setInterval(() => manager.cleanupDisconnected(), 1000).unref();
+setInterval(() => manager.cleanupDisconnected(), 250).unref();
 httpServer.listen(PORT, HOST, () => {
-  console.log(`\n  САМОПАЛКА\n  Сервер: http://localhost:${PORT}`);
-  console.log(`  Слушает: ${HOST}:${PORT}`);
+  console.log(`\n  САМОПАЛКА • игровой сервер\n  Сервер: http://localhost:${PORT}`);
+  console.log(`  Слушает: ${HOST}:${PORT} (доступ по Radmin VPN при разрешённом брандмауэре)`);
   const ips = Object.values(networkInterfaces()).flatMap(items => items ?? []).filter(ip => ip.family === 'IPv4' && !ip.internal);
   ips.forEach(ip => console.log(`  Сеть: http://${ip.address}:${PORT}`));
   console.log('  Для остановки нажмите Ctrl+C.\n');

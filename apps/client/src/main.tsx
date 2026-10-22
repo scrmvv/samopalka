@@ -4,6 +4,9 @@ import { io } from 'socket.io-client';
 import { HEROES, type Ack, type HeroId, type RoomSnapshot } from '@samopalka/shared';
 import { ArrowLeft, ArrowRight, Check, CheckCheck, ChevronDown, Clipboard, Copy, Crown, Link2, LockKeyhole, Plus, Radio, Settings2, Swords, Users, Wifi, WifiOff, X } from 'lucide-react';
 import './style.css';
+import './battle.css';
+import { HeroSprite } from './HeroSprite';
+import { BattleBoard } from './BattleBoard';
 
 type NetworkInfo = { port: number; radmin: string[]; addresses: string[] };
 type SessionResponse = { playerId: string; room: RoomSnapshot };
@@ -27,45 +30,6 @@ function sessionToken() {
   return token;
 }
 // Miniature 12x12 hero portraits. Crisp SVG pixels, no image downloads required.
-const SPRITE_PALETTE: Record<string, string> = {
-  o: '#222c33', m: '#d8ded9', s: '#e4b38a', h: '#f3d79a',
-  g: '#b99552', b: '#688da5', B: '#93b9c9', r: '#bd615b',
-  R: '#e99b77', n: '#729b70', N: '#a8cc8b', p: '#8767ae',
-  P: '#c49bdc', t: '#4e9f94', T: '#9ccfbc', w: '#ece5d3',
-};
-const HERO_SPRITES: Record<HeroId, readonly string[]> = {
-  warrior: [
-    '............','....gggg....','...gmmmmg...','...mBmmBm...','...mssssm...','....soos....',
-    '...bbbbbb...','..bbBbbBbb..','..bmbbbbmb..','..bmbbbbmb..','...oo..oo...','............',
-  ],
-  berserker: [
-    '............','...rr..rr...','..rRRrrRRr..','..RRRRRRRR..','...RssssR...','...soosss...',
-    '...rRRRRr...','..rrrrrrrr..','..rrsrrsrr..','..rrr..rrr..','...oo..oo...','............',
-  ],
-  knight: [
-    '............','....mmmm....','...mBBBBm...','..mBBmmBBm..','..mBooooBm..','..mBBssBBm..',
-    '..BBBBBBBB..','..BmmBBmmB..','..BBBmmBBB..','..BBmBBmBB..','...oo..oo...','............',
-  ],
-  healer: [
-    '............','....nNNn....','...nNwwNn...','..nNwNNwNn..','..nnssssnn..','...soosss...',
-    '...NNNNNN...','..NNNwwNNN..','..NNNwwNNN..','..nnNNNNnn..','...oo..oo...','............',
-  ],
-  adept: [
-    '............','.....pp.....','....pPPp....','...pPPPPp...','..ppPPPPpp..','..pPssssPp..',
-    '...sossso...','..ppPPPPpp..','..pPPwwPPp..','..pppPPppp..','...oo..oo...','............',
-  ],
-  archer: [
-    '............','....tTTt....','...tTTTTt...','..tTssssTt..','..ttsoostt..','...tsssst...',
-    '..tTTTTTTt..','..ttTttTtt..','..tTt..tTt..','..ttt..ttt..','...oo..oo...','............',
-  ],
-};
-function HeroSprite({id, compact = false}: {id: HeroId; compact?: boolean}) {
-  const rows = HERO_SPRITES[id];
-  return <svg className={compact ? 'pixel-portrait small' : 'pixel-portrait'} viewBox="0 0 12 12" shapeRendering="crispEdges" aria-hidden="true">
-    {rows.flatMap((row, y) => [...row.trimEnd()].map((pixel, x) => pixel === '.' || !SPRITE_PALETTE[pixel] ? null : <rect key={`${x}-${y}`} x={x} y={y} width="1" height="1" fill={SPRITE_PALETTE[pixel]}/>))}
-  </svg>;
-}
-
 const SOCKET = io({ autoConnect: false, reconnection: true });
 
 function App() {
@@ -117,6 +81,7 @@ function App() {
     function disconnected() { setOnline(false); }
     function received(snapshot: RoomSnapshot) { setRoom(snapshot); }
     function closed() { storage.remove('room'); setRoom(null); setPlayerId(''); setError('Комната закрыта.'); }
+    function kicked(reason: string) { storage.remove('room'); setRoom(null); setPlayerId(''); setError(reason || 'Вы исключены из комнаты.'); window.setTimeout(() => SOCKET.connect(), 150); }
     function replaced() {
       storage.remove('room'); setRoom(null); setPlayerId('');
       setError('Эта сессия открыта в другом окне.');
@@ -126,12 +91,13 @@ function App() {
     SOCKET.on('disconnect', disconnected);
     SOCKET.on('room:state', received);
     SOCKET.on('room:closed', closed);
+    SOCKET.on('room:kicked', kicked);
     SOCKET.on('session:replaced', replaced);
     SOCKET.connect();
     return () => {
       active = false;
       SOCKET.off('connect', connected); SOCKET.off('disconnect', disconnected);
-      SOCKET.off('room:state', received); SOCKET.off('room:closed', closed);
+      SOCKET.off('room:state', received); SOCKET.off('room:closed', closed); SOCKET.off('room:kicked', kicked);
       SOCKET.off('session:replaced', replaced); SOCKET.disconnect();
     };
   }, [call]);
@@ -225,7 +191,7 @@ function App() {
         {error && <div className="error" role="alert">{error}</div>}
         <div className="gate-footer"><LockKeyhole size={15}/><span>Без регистрации. Создай комнату или присоединись по коду.</span></div>
       </section>
-    </main> : <main className="lobby wrap">
+    </main> : room.status === 'started' && room.game ? <BattleBoard room={room} playerId={playerId} online={online} busy={busy} error={error} onAction={(event, payload) => void act(event, payload)} onExit={() => void leaveRoom()} onClearError={() => setError('')} /> : <main className="lobby wrap">
       <div className="crumb"><button onClick={() => void leaveRoom()} disabled={busy}><ArrowLeft size={17}/> Покинуть комнату</button><span>/</span><span>{room.campaign}</span></div>
       <div className="lobby-head"><div><div className="eyebrow"><span className="eyebrow-line"/> {room.status === 'lobby' ? 'СБОР ОТРЯДА' : 'ОТРЯД ГОТОВ'}</div>
         <h1>{room.name}</h1><div className="lobby-sub"><Users size={17}/> {room.players.filter(p => p.connected).length} в сети · {room.players.length} из {room.maxPlayers} мест занято <span className="dot">·</span> Кампания: {room.campaign}</div></div>
