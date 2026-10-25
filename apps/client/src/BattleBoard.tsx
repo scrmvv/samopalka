@@ -1,7 +1,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { ArrowLeft, CheckCircle2, Clock3, Dice5, Heart, MessageSquare, ScrollText, X } from 'lucide-react';
-import { HEROES, HERO_DICE, type DiceFace, type RoomSnapshot } from '@samopalka/shared';
+import { HEROES, HERO_DICE, type DiceFace, type RoomSnapshot, type CombatantSnapshot } from '@samopalka/shared';
 import { HeroSprite } from './HeroSprite';
 import { radialPosition, PLAYER_RING_RADIUS, MONSTER_RING_RADIUS } from './boardLayout';
 
@@ -35,6 +35,14 @@ function EffectMark({face}:{face:DiceFace}) {
     {face.kind==='strike' ? '⚔' : face.kind==='shield' ? '◆' : face.kind==='heal' ? '+' : face.kind==='mana' ? '✧' : face.kind==='special' ? '✦' : '−'}
   </span>;
 }
+function CombatStats({ entity }:{ entity:CombatantSnapshot | undefined }) {
+  if (!entity) return null;
+  return <span className="combat-token-stats">
+    <span className="combat-hp"><Heart size={10} fill="currentColor"/> {entity.hp}/{entity.maxHp}</span>
+    {entity.shield>0 && <span className="combat-shield">◆ {entity.shield}</span>}
+    {entity.kind==='hero' && <span className="combat-mana">✧ {entity.mana}/{entity.maxMana}</span>}
+  </span>;
+}
 function DieCell({face, number, action}:{face:DiceFace;number:number;action?:()=>void}) {
   const classes = 'battle-die type-'+face.kind+(action?' interactive':'');
   const contents = <><span className="battle-die-no">{number}</span><EffectMark face={face}/><strong>{face.label}</strong></>;
@@ -56,10 +64,16 @@ export function BattleBoard({room,playerId,online,busy,error,onAction,onExit,onC
   const canAct = myTurn && !busy && left>0;
   const faces = mine?.heroId ? HERO_DICE[mine.heroId] : [];
   const activeFaces = active?.heroId ? HERO_DICE[active.heroId] : [];
-  const title = game.phase==='paused' ? 'ИГРА ПРИОСТАНОВЛЕНА' : myTurn ? 'ВАШ ХОД' : `ХОДИТ: ${active?.nickname ?? 'ИГРОК'}`;
-  const awaiting = !online ? 'Соединение прервано. Возвращаемся в игру…' : game.phase==='paused' ? 'В комнате не осталось участников.' : myTurn ? game.phase==='roll' ? 'Бросьте два кубика.' : 'Выберите один из двух результатов.' : 'Ожидайте броска другого игрока.';
+  const title = game.phase==='paused' ? 'ИГРА ПРИОСТАНОВЛЕНА' : game.phase==='rest' ? 'ПРИВАЛ' : game.phase==='finished' ? 'ПАРТИЯ ОКОНЧЕНА' : myTurn ? 'ВАШ ХОД' : `ХОДИТ: ${active?.nickname ?? 'ИГРОК'}`;
+  const awaiting = !online ? 'Соединение прервано. Возвращаемся в игру…' : game.phase==='paused' ? 'В комнате не осталось участников.' : game.phase==='rest' ? 'Этаж пройден. Хост может открыть следующий этаж.' : game.phase==='finished' ? 'Результат партии отображается на поле.' : myTurn ? game.phase==='roll' ? 'Бросьте два кубика.' : game.phase==='choose' ? 'Выберите одну из двух граней.' : 'Выберите подсвеченную цель на поле.' : 'Ожидайте действия другого игрока.';
   const rolls = useMemo(()=>game.rolls?.map((n,i)=>({n,index:i,face: activeFaces[n-1]})) ?? [],[game.rolls,activeFaces]);
-  const monsters = room.players.map((p, i) => ({ ownerId: p.id, ownerNickname: p.nickname, variant: MONSTER_VARIANTS[i % MONSTER_VARIANTS.length], name: `Монстр ${i+1}` }));
+  const monsters = game.combatants.filter(c=>c.kind==='monster').map((c, i) => ({
+    id:c.id, ownerId:c.ownerId, ownerNickname:room.players.find(p=>p.id===c.ownerId)?.nickname ?? 'герой',
+    variant: MONSTER_VARIANTS[i % MONSTER_VARIANTS.length], name:c.name
+  }));
+  const combatants = useMemo(() => new Map(game.combatants.map(c => [c.id, c])), [game.combatants]);
+  const canTarget = (id: string) => canAct && game.phase==='target' && game.availableTargetIds.includes(id);
+  const pickTarget = (id: string) => { if (canTarget(id)) onAction('game:target', id); };
 
   return <main className="battle-shell battle-circular-shell">
     <div className="battle-topline">
@@ -85,34 +99,47 @@ export function BattleBoard({room,playerId,online,busy,error,onAction,onExit,onC
           {room.players.map((p, index)=>{
             const hero = p.heroId ? HEROES.find(h=>h.id===p.heroId) : null;
             return <div key={p.id} className={'table-seat lane-'+(index%6)+' '+(p.id===playerId?'self ':'')+(p.id===game.activePlayerId?'active ':'')+(!p.connected?'offline':'')} style={radialPosition(index, room.players.length, PLAYER_RING_RADIUS)}>
-              <div className="table-seat-card">
+              <button type="button" disabled={!canTarget(p.id)} onClick={()=>pickTarget(p.id)}
+                className={'table-seat-card token-interaction '+(canTarget(p.id)?'can-target ':'')+(!combatants.get(p.id)?.alive?'defeated':'')} title={canTarget(p.id)?'Выбрать цель':''}>
                 <div className="table-seat-sprite">{p.heroId ? <HeroSprite id={p.heroId} compact/> : <div className="empty-seat">+</div>}</div>
                 <strong>{p.nickname}{p.id===playerId?' · ВЫ':''}</strong>
                 <small>{hero?.name ?? 'Герой не выбран'}</small>
-                <span className="seat-hp"><Heart size={10} fill="currentColor"/> {hero?.hp ?? '?'}</span>
-              </div>
+                <CombatStats entity={combatants.get(p.id)}/>
+              </button>
             </div>;
           })}
 
           {monsters.map((monster, index)=>{
+            const ownerIndex = room.players.findIndex(p=>p.id===monster.ownerId);
+            const displayIndex = ownerIndex >= 0 ? ownerIndex : index;
+            const siblings = monsters.filter(m=>m.ownerId===monster.ownerId);
+            const ordinal = siblings.findIndex(m=>m.id===monster.id);
+            const spread = siblings.length > 1 ? (ordinal-(siblings.length-1)/2)*13 : 0;
             const ownerActive = monster.ownerId === game.activePlayerId;
-            return <div key={monster.ownerId} title={`Монстр напротив ${monster.ownerNickname}`} className={'table-monster lane-'+(index%6)+' '+(ownerActive?'active':'')} style={radialPosition(index, monsters.length, MONSTER_RING_RADIUS)}>
-              <div className="table-monster-card">
+            return <div key={monster.ownerId} title={`Монстр напротив ${monster.ownerNickname}`} className={'table-monster lane-'+(index%6)+' '+(ownerActive?'active':'')} style={radialPosition(displayIndex, room.players.length, MONSTER_RING_RADIUS + spread)}>
+              <button type="button" disabled={!canTarget(monster.id)} onClick={()=>pickTarget(monster.id)} className={'table-monster-card token-interaction '+(canTarget(monster.id)?'can-target ':'')+(!combatants.get(monster.id)?.alive?'defeated':'')}>
                 <EnemySprite variant={monster.variant}/>
                 <strong>{monster.name}</strong>
-                
-              </div>
+                <CombatStats entity={combatants.get(monster.id)}/>
+              </button>
             </div>;
           })}
 
           <div className="table-boss-core">
-            <div className="boss-card">
+            <button type="button" disabled={!canTarget('boss')} onClick={()=>pickTarget('boss')} className={'boss-card token-interaction '+(canTarget('boss')?'can-target ':'')+(!combatants.get('boss')?.alive?'defeated':'')}>
               <EnemySprite variant="boss"/>
-              <strong>БОСС</strong>
+              <strong>{combatants.get('boss')?.name ?? 'БОСС'}</strong>
+              <CombatStats entity={combatants.get('boss')}/>
               <small>Общая цель для всех игроков</small>
-            </div>
+            </button>
           </div>
         </div>
+        {(game.phase==='rest' || game.phase==='finished') && <div className="battle-milestone panel" role="status">
+          <h2>{game.phase==='rest' ? `Этаж ${game.floor} пройден!` : game.result?.reason==='six_floors' ? 'Все 6 этажей пройдены!' : game.result?.reason==='last_survivor' ? 'Последний выживший!' : 'Партия окончена'}</h2>
+          <p>{game.phase==='rest' ? 'Привал: после продолжения герои восстановят здоровье, затем появятся новые противники. Награды появятся в следующем обновлении.' : game.result?.reason==='party_wiped' ? 'Никому не удалось выжить.' : game.result?.winnerIds.includes(playerId) ? 'Вы среди победителей.' : 'Результат зафиксирован на сервере.'}</p>
+          {game.phase==='rest' && <button className="button button-primary" disabled={!mine?.isHost || busy || !online} onClick={()=>onAction('game:next-floor',{})}>Перейти на этаж {game.floor+1}</button>}
+          {game.phase==='rest' && !mine?.isHost && <small>Ожидание решения хоста</small>}
+        </div>}
       </section>
 
       <aside className="battle-side-column">
@@ -121,14 +148,15 @@ export function BattleBoard({room,playerId,online,busy,error,onAction,onExit,onC
             <h2><Dice5 size={16}/> КУБИК И АРТЕФАКТЫ</h2>
             <span>{mineHero?.name ?? 'Герой'}</span>
           </div>
+          {game.phase === 'target' && <div className="battle-target-hint" role="status">{myTurn ? `Выберите цель: ${game.pendingAction?.label ?? 'действие'}` : `${active?.nickname ?? 'Игрок'} выбирает цель`}</div>}
           <div className="battle-six compact">{faces.map((face,index)=><DieCell key={index} face={face} number={index+1}/>)}</div>
           {game.phase==='choose' && game.rolls ? <>
             <div className="battle-choice-label">{myTurn ? 'ВЫПАЛИ ДВА РЕЗУЛЬТАТА — ВЫБЕРИТЕ ОДИН' : `РЕЗУЛЬТАТЫ БРОСКА: ${active?.nickname ?? 'ИГРОК'}`}</div>
             <div className="battle-roll-results compact">{rolls.map(result=><DieCell key={result.index} face={result.face} number={result.n} action={canAct?()=>onAction('game:choose',result.index):undefined} />)}</div>
-          </> : <div className="battle-roll-note">Бросьте два кубика и выберите один результат.</div>}
+          </> : <div className="battle-roll-note">{game.phase==='target' ? 'Подсвеченные фигурки доступны для выбора цели.' : 'Бросьте два кубика и выберите один результат.'}</div>}
           <div className="battle-artifact-stack">
             <div className="artifact-placeholder"><span>✦</span><div><strong>Артефакты</strong><small>Пока не получены</small></div></div>
-            <div className="artifact-placeholder"><span>◆</span><div><strong>Эффекты</strong><small>Активных эффектов нет</small></div></div>
+            <div className="artifact-placeholder"><span>◆</span><div><strong>Ресурсы</strong><small>Мана {combatants.get(playerId)?.mana ?? 0}/{combatants.get(playerId)?.maxMana ?? 3} · Щит {combatants.get(playerId)?.shield ?? 0}</small></div></div>
           </div>
           <div className="battle-action-buttons single-row">
             <button className="button button-primary" disabled={!canAct || game.phase!=='roll'} onClick={()=>onAction('game:roll',{})}><Dice5 size={18}/> Бросить кубики</button>

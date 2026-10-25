@@ -23,7 +23,7 @@ const manager = new RoomManager(code => {
   if (socket) { socket.emit('room:kicked', reason); setTimeout(() => socket.disconnect(true), 150).unref(); }
 });
 
-app.get('/api/health', (_, res) => res.json({ ok: true, name: 'Самопалка', stage: 2 }));
+app.get('/api/health', (_, res) => res.json({ ok: true, name: 'Самопалка', stage: '3.2' }));
 app.get('/api/network', (_, res) => {
   const interfaces = Object.values(networkInterfaces()).flatMap(items => items ?? []);
   const addresses = [...new Set(interfaces.filter(ip => ip.family === 'IPv4' && !ip.internal).map(ip => ip.address))];
@@ -93,7 +93,9 @@ io.on('connection', (socket: Socket) => {
   }));
   socket.on('game:roll', (_input, ack: Done) => handle(ack, () => manager.rollDice(socket.id)));
   socket.on('game:choose', (index, ack: Done) => handle(ack, () => manager.selectDice(socket.id, index)));
+  socket.on('game:target', (targetId, ack: Done) => handle(ack, () => manager.selectTarget(socket.id, targetId)));
   socket.on('game:pass', (_input, ack: Done) => handle(ack, () => manager.passTurn(socket.id)));
+  socket.on('game:next-floor', (_input, ack: Done) => handle(ack, () => manager.nextFloor(socket.id)));
   socket.on('room:leave', (_input, ack: Done) => handle(ack, () => {
     const connection = manager.getConnection(socket.id);
     if (!connection) throw new RoomError('Вы уже вышли из комнаты.');

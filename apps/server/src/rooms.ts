@@ -221,9 +221,23 @@ export class RoomManager {
     this.touch(room);
     return room.code;
   }
+  selectTarget(socketId: string, targetId: unknown) {
+    const {room, player, game} = this.battleMember(socketId);
+    try { game.target(player.id, targetId, player.nickname); } catch (e) { if (e instanceof BattleError) throw new RoomError(e.message); throw e; }
+    this.touch(room);
+    return room.code;
+  }
   passTurn(socketId: string) {
     const {room, player, game} = this.battleMember(socketId);
     try { game.pass(player.id, player.nickname); } catch (e) { if (e instanceof BattleError) throw new RoomError(e.message); throw e; }
+    this.touch(room);
+    return room.code;
+  }
+
+  nextFloor(socketId: string) {
+    const {room, player, game} = this.battleMember(socketId);
+    this.requireHost(room, player);
+    try { game.continueFloor(); } catch (e) { if (e instanceof BattleError) throw new RoomError(e.message); throw e; }
     this.touch(room);
     return room.code;
   }

@@ -529,3 +529,124 @@
 @media (max-width: 390px) {
   .table-monster-card strong { font-size: 7px; }
 }
+
+
+/* Stage 3.1: targeted server-side combat, keep stage 2 table styling. */
+.token-interaction {
+  appearance:none;cursor:default;font:inherit;color:inherit;text-align:center;
+  display:flex;align-items:center;justify-content:center;flex-direction:column;
+}
+.token-interaction:disabled {opacity:1;cursor:default}
+.token-interaction.can-target {cursor:crosshair;outline:2px dashed #f0c779;outline-offset:5px;filter:drop-shadow(0 0 9px #e8bd73a8)}
+.token-interaction.can-target:hover {outline:3px solid #ffda8c;filter:drop-shadow(0 0 13px #ffda8ccf)}
+.token-interaction.defeated {filter:grayscale(1);opacity:.38}
+.combat-token-stats {display:flex;align-items:center;justify-content:center;gap:6px;flex-wrap:wrap;white-space:nowrap;font-size:9px;text-shadow:1px 1px #03070a}
+.combat-token-stats >span {display:inline-flex;align-items:center;gap:2px}
+.combat-hp {color:#f28e8b}.combat-shield {color:#8fcaf4}.combat-mana {color:#cfadf3}
+.boss-card .combat-token-stats {font-size:10px}
+.battle-target-hint {border:1px solid #c5a367;background:#352d1baa;color:#f3d099;padding:12px 10px;font:10px/1.7 var(--pixel);margin-bottom:12px}
+@media(max-width:650px){.combat-token-stats{gap:2px;font-size:7px}.table-seat-card .combat-mana{display:none}}
+
+/* Stage 3.2: floor intermission and final outcome */
+.battle-milestone{position:absolute;z-index:5;left:50%;top:50%;transform:translate(-50%,-50%);width:min(390px,calc(100% - 35px));padding:24px 20px;text-align:center;background:rgba(15,23,30,.96);border:2px solid #bc9365;box-shadow:0 8px 22px #030608ba}
+.battle-milestone h2{margin:0 0 14px;font:clamp(12px,1.3vw,17px)/1.5 var(--pixel);color:#edc68a}
+.battle-milestone p{color:#c4d1ca;font-size:12px;line-height:1.7;margin:0 0 18px}
+.battle-milestone button{width:100%;min-height:42px}
+.battle-milestone small{color:#9cafa4}
+
+
+/* Stage 3.2 readability polish: larger stat chips, wider labels and more space between rings. */
+.table-seat-card{width:120px;min-height:128px;padding:10px 8px 12px;gap:5px}
+.table-monster-card{width:120px;min-height:112px;padding:8px 6px 10px;gap:4px}
+.boss-card{width:158px;min-height:164px}
+.table-seat-sprite{margin-bottom:2px}
+.table-monster-card .battle-pixel{margin-bottom:2px}
+.table-seat-card strong{max-width:112px;font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.table-seat-card small{max-width:112px;font-size:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.table-monster-card strong{display:block;width:max-content;max-width:none;white-space:nowrap;overflow:visible;text-overflow:clip;text-align:center;align-self:center;font-size:9px;line-height:1.2}
+.boss-card strong{font-size:13px}
+.combat-token-stats{display:flex;align-items:center;justify-content:center;gap:7px;flex-wrap:nowrap;white-space:nowrap;margin-top:2px;padding:3px 6px;min-height:18px;font:9px/1 var(--pixel);text-shadow:1px 1px #03070a;background:rgba(8,14,20,.84);border:1px solid rgba(96,122,132,.55);box-shadow:inset 0 0 0 1px rgba(0,0,0,.45)}
+.combat-token-stats > span{display:inline-flex;align-items:center;gap:2px;min-width:0}
+.combat-hp,.combat-shield,.combat-mana{white-space:nowrap}
+.combat-hp svg{width:10px;height:10px}
+.boss-card .combat-token-stats{font-size:10px;padding:4px 7px}
+.table-seat-card .combat-token-stats,.table-monster-card .combat-token-stats{max-width:112px}
+.table-board.players-5 .table-seat-card,.table-board.players-6 .table-seat-card{width:104px;min-height:118px}
+.table-board.players-5 .table-monster-card,.table-board.players-6 .table-monster-card{width:104px;min-height:100px}
+.table-board.players-5 .table-seat-card strong,.table-board.players-6 .table-seat-card strong{max-width:96px}
+.table-board.players-5 .table-seat-card small,.table-board.players-6 .table-seat-card small{max-width:96px}
+.table-board.players-5 .table-seat-card .combat-token-stats,.table-board.players-6 .table-seat-card .combat-token-stats,.table-board.players-5 .table-monster-card .combat-token-stats,.table-board.players-6 .table-monster-card .combat-token-stats{max-width:96px;font-size:8px;gap:4px;padding:2px 4px}
+@media (max-width: 900px){
+  .table-seat-card{width:100px;min-height:118px}
+  .table-monster-card{width:98px;min-height:96px}
+  .boss-card{width:142px;min-height:150px}
+  .table-seat-card strong,.table-monster-card strong{font-size:8px}
+  .combat-token-stats{font-size:8px;gap:4px;padding:2px 4px}
+}
+@media (max-width: 620px){
+  .table-seat-card{width:82px;min-height:100px;padding:6px 4px 8px}
+  .table-monster-card{width:80px;min-height:82px;padding:5px 4px 7px}
+  .boss-card{width:112px;min-height:120px}
+  .table-seat-card strong,.table-monster-card strong{font-size:7px}
+  .table-seat-card small{font-size:7px}
+  .combat-token-stats{font-size:7px;gap:3px;padding:2px 3px;min-height:14px}
+}
+
+
+/* Stage 3.2 micro-polish: cleaner stats, more readable digits and role labels. */
+.table-seat-card strong,.table-monster-card strong,.boss-card strong{ text-shadow: 2px 2px 0 rgba(4,7,10,.9); }
+
+.table-seat-card small{
+  display:block;
+  max-width:110px;
+  margin-top:1px;
+  padding:1px 6px 2px;
+  border:1px solid rgba(105,128,136,.55);
+  background:rgba(10,17,22,.78);
+  color:#d7e2db;
+  font:600 10px/1.1 Arial, Helvetica, sans-serif;
+  letter-spacing:.01em;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  border-radius:2px;
+}
+
+.combat-token-stats{
+  gap:5px;
+  margin-top:3px;
+  padding:3px 5px;
+  min-height:16px;
+  border:1px solid rgba(82,102,114,.72);
+  background:rgba(7,12,18,.92);
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,.55);
+  border-radius:2px;
+  font:700 12px/1 Arial, Helvetica, sans-serif;
+  letter-spacing:0;
+  text-shadow:none;
+}
+.combat-token-stats > span{gap:3px}
+.combat-hp,.combat-shield,.combat-mana{font-weight:700}
+.combat-hp{color:#ffb0a8}
+.combat-shield{color:#9fdcff}
+.combat-mana{color:#d6b8ff}
+.combat-hp svg{width:11px;height:11px;filter:drop-shadow(0 1px 0 rgba(0,0,0,.35))}
+.boss-card .combat-token-stats{font-size:13px;padding:4px 7px;min-height:18px}
+.table-seat-card .combat-token-stats,.table-monster-card .combat-token-stats{max-width:116px}
+
+/* Make stacked top/bottom tokens breathe a bit more. */
+.table-seat .table-seat-card,.table-monster .table-monster-card{backdrop-filter: blur(1px);}
+.table-seat.active .table-seat-card::after,.table-monster.active .table-monster-card::after{opacity:.32}
+
+@media (max-width: 900px){
+  .table-seat-card small{font-size:9px;max-width:92px;padding:1px 4px 2px}
+  .combat-token-stats{font-size:10px;padding:2px 4px;gap:4px}
+  .boss-card .combat-token-stats{font-size:11px}
+  .table-seat-card .combat-token-stats,.table-monster-card .combat-token-stats{max-width:96px}
+}
+@media (max-width: 620px){
+  .table-seat-card small{font-size:8px;max-width:74px;padding:1px 3px}
+  .combat-token-stats{font-size:9px;padding:2px 3px;gap:3px;min-height:14px}
+  .boss-card .combat-token-stats{font-size:10px}
+  .table-seat-card .combat-token-stats,.table-monster-card .combat-token-stats{max-width:78px}
+}

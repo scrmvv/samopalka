@@ -31,7 +31,7 @@ export type Ack<T = undefined> = { ok: true; data: T } | { ok: false; error: str
 export type CreateRoomData = { nickname: string; name: string; maxPlayers: number; token: string };
 export type JoinRoomData = { nickname: string; code: string; token: string };
 
-// Dice faces transcribed from the printed hero cards. They are display-only in stage 2.
+// Starter dice from the printed hero cards. Special words are handled in later milestones.
 export type DiceFace = { kind: 'strike' | 'shield' | 'heal' | 'mana' | 'empty' | 'special'; value: number; label: string; note?: string };
 const face = (kind: DiceFace['kind'], value: number, label: string, note?: string): DiceFace => ({ kind, value, label, ...(note ? { note } : {}) });
 export const HERO_DICE: Record<HeroId, readonly DiceFace[]> = {
@@ -43,15 +43,33 @@ export const HERO_DICE: Record<HeroId, readonly DiceFace[]> = {
   archer: [face('empty',0,'Пусто'),face('empty',0,'Пусто'),face('heal',2,'Лечение 2'),face('strike',2,'Удар 2 + Дальность'),face('strike',2,'Удар 2 + Дальность'),face('strike',3,'Удар 3 + Дальность')]
 };
 
+/** Public combat data. HP values for monsters and the boss are temporary test values in 3.1. */
+export type CombatantSnapshot = {
+  id: string;
+  kind: 'hero' | 'monster' | 'boss';
+  ownerId: string | null;
+  name: string;
+  hp: number;
+  maxHp: number;
+  shield: number;
+  mana: number;
+  maxMana: number;
+  alive: boolean;
+};
+export type PendingAction = { kind: DiceFace['kind']; value: number; label: string };
 export type BattleEvent = { id: number; kind: 'system' | 'turn' | 'dice' | 'action' | 'timeout'; text: string };
 export type BattleSnapshot = {
   floor: number;
   round: number;
   activePlayerId: string | null;
-  phase: 'roll' | 'choose' | 'paused';
+  phase: 'roll' | 'choose' | 'target' | 'rest' | 'paused' | 'finished';
   deadlineAt: number | null;
   serverTime: number;
   rolls: [number, number] | null;
   events: BattleEvent[];
   missedTurns: Record<string,number>;
+  combatants: CombatantSnapshot[];
+  pendingAction: PendingAction | null;
+  availableTargetIds: string[];
+  result: null | { reason: 'six_floors' | 'last_survivor' | 'party_wiped'; winnerIds: string[] };
 };
