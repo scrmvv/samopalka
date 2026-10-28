@@ -150,7 +150,6 @@ export class RoomManager {
     const { room, player } = this.requireMember(socketId);
     this.requireLobby(room);
     if (typeof heroId !== 'string' || !HEROES.some(h => h.id === heroId)) throw new RoomError('Такой герой не найден.');
-    if (room.players.some(p => p.id !== player.id && p.heroId === heroId)) throw new RoomError('Этого героя уже выбрал другой игрок.');
     player.heroId = heroId as HeroId;
     player.ready = false;
     this.touch(room);
@@ -218,6 +217,12 @@ export class RoomManager {
   selectDice(socketId: string, faceIndex: unknown) {
     const {room, player, game} = this.battleMember(socketId);
     try { game.choose(player.id, faceIndex, player.nickname); } catch (e) { if (e instanceof BattleError) throw new RoomError(e.message); throw e; }
+    this.touch(room);
+    return room.code;
+  }
+  cancelDiceChoice(socketId: string) {
+    const {room,player,game} = this.battleMember(socketId);
+    try { game.cancelChoice(player.id); } catch (e) { if (e instanceof BattleError) throw new RoomError(e.message); throw e; }
     this.touch(room);
     return room.code;
   }

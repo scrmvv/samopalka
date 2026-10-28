@@ -10,6 +10,7 @@ function make(heroes: TestHero[] = [{id:'a',heroId:'warrior'},{id:'b',heroId:'he
   let now = 1000;
   let dieIndex = 0;
   const session = new BattleSession(heroes, () => now, () => rolls[dieIndex++ % rolls.length]!, pick);
+  const monster = (id: string, floor = session.snapshot().floor) => `monster:${floor}:${id}`;
   const entity = (id: string) => session.snapshot().combatants.find(c=>c.id===id);
   const act = (id: string, target?: string) => {
     session.roll(id,id);
@@ -18,17 +19,18 @@ function make(heroes: TestHero[] = [{id:'a',heroId:'warrior'},{id:'b',heroId:'he
       if (!target) throw Error('Тест: ожидалась цель');
       session.target(id,target,id);
     }
+    if (session.snapshot().phase === 'enemy') { now += 500; session.tick(()=>true,id=>id); }
   };
-  return {session,entity,act, advance(ms: number) { now+=ms; }};
+  return {session,entity,act,monster, advance(ms: number) { now+=ms; }, resolveEnemy() { now+=500; session.tick(()=>true,id=>id); }};
 }
 
 test('бросок двух кубиков, выбор грани и ответная атака монстра', () => {
-  const {session,act,entity} = make();
+  const {session,act,entity,monster} = make();
   assert.equal(session.activePlayer(),'a');
   assert.throws(()=>session.choose('a',0,'a'),/Сначала бросьте/);
-  const monsterHp = entity('monster:a')!.hp;
-  act('a','monster:a');
-  assert.equal(entity('monster:a')?.hp,monsterHp-2);
+  const monsterHp = entity(monster('a'))!.hp;
+  act('a',monster('a'));
+  assert.equal(entity(monster('a'))?.hp,monsterHp-2);
   assert.equal(entity('a')?.hp,9); // dead man strikes 2, from source monster table
   assert.equal(session.activePlayer(),'b');
   assert.equal(session.snapshot().rolls,null);
@@ -44,40 +46,45 @@ test('нельзя делать бросок или выбирать за дру
 });
 
 test('таймаут пропускает ход, враги всё равно атакуют, второй пропуск — кик', () => {
-  const {session,advance,entity} = make();
+  const {session,advance,entity,resolveEnemy} = make();
   advance(60_000);
   assert.deepEqual(session.tick(()=>true,id=>id),[]);
+  resolveEnemy();
   assert.equal(entity('a')?.hp,9);
   assert.equal(session.activePlayer(),'b');
   session.pass('b','b');
+  resolveEnemy();
   advance(60_000);
   assert.deepEqual(session.tick(()=>true,id=>id),['a']);
   assert.equal(session.snapshot().missedTurns.a,2);
 });
 
 test('переподключение не увеличивает счётчик пропусков', () => {
-  const {session,advance} = make();
+  const {session,advance,resolveEnemy} = make();
   session.disconnected('a');
   advance(60_000);
   assert.deepEqual(session.tick(id=>id!=='a',id=>id),[]);
   assert.equal(session.snapshot().missedTurns.a??0,0);
+  resolveEnemy();
   session.pass('b','b');
+  resolveEnemy();
   session.reconnected('a');
   session.roll('a','a');
 });
 
 test('после полного круга игроков атакует босс ровно один раз', () => {
-  const {session,act} = make();
-  act('a','monster:a');
+  const {session,act,monster,resolveEnemy} = make();
+  act('a',monster('a'));
   session.pass('b','b');
+  resolveEnemy();
   const bossEvents=session.snapshot().events.filter(e=>e.text.startsWith('Ход босса'));
   assert.equal(bossEvents.length,1);
   assert.equal(session.snapshot().round,2);
 });
 
 test('босс не ходит между двумя героями одного круга', () => {
-  const {session,act} = make();
-  act('a','monster:a');
+  const {session,act,monster} = make();
+  act('a',monster('a'));
   assert.equal(session.snapshot().events.some(e=>e.text.startsWith('Ход босса')),false);
 });
 
@@ -109,9 +116,9 @@ test('нельзя атаковать босса, пока перед герое
 });
 
 test('соседний монстр доступен для базового удара',()=>{
-  const {session}=make();
+  const {session,monster}=make();
   session.roll('a','a');session.choose('a',0,'a');
-  assert.ok(session.snapshot().availableTargetIds.includes('monster:b'));
+  assert.ok(session.snapshot().availableTargetIds.includes(monster('b')));
 });
 
 test('все шесть этажей имеют босса и достаточную колоду монстров',()=>{
@@ -172,12 +179,12 @@ test('победа последнего выжившего определяет�
 
 test('смерть в отряде из 3 героев переводит монстров к следующему живому',()=>{
   const heroes:TestHero[]=[{id:'a',heroId:'warrior'},{id:'b',heroId:'healer'},{id:'c',heroId:'adept'}];
-  const {session,act,entity}=make(heroes);
+  const {session,act,entity,monster}=make(heroes);
   const state=(session as unknown as {combatants:Map<string,{hp:number}>}).combatants;
   state.get('b')!.hp=1;
   act('a','b');
   assert.equal(entity('b')?.alive,false);
-  assert.equal(entity('monster:b')?.ownerId,'c');
+  assert.equal(entity(monster('b'))?.ownerId,'c');
   assert.equal(session.snapshot().phase,'roll');
 });
 
@@ -233,4 +240,92 @@ test('только хост может запустить следующий э�
   assert.throws(()=>manager.nextFloor('g'),/хосту/);
   manager.nextFloor('h');
   assert.equal(manager.snapshot(code)?.game?.floor,2);
+});
+
+test('после выбора грани можно вернуться к паре кубиков, не перебрасывая и не продлевая время', () => {
+  const {session} = make();
+  session.roll('a','a');
+  const previous = session.snapshot();
+  session.choose('a',0,'a');
+  assert.equal(session.snapshot().phase,'target');
+  session.cancelChoice('a');
+  assert.equal(session.snapshot().phase,'choose');
+  assert.deepEqual(session.snapshot().rolls,previous.rolls);
+  assert.equal(session.snapshot().deadlineAt,previous.deadlineAt);
+  session.choose('a',1,'a');
+  assert.equal(session.snapshot().phase,'target');
+});
+
+test('чужой игрок не может отменить выбранную грань, после удара уже поздно', () => {
+  const {session,monster} = make();
+  session.roll('a','a');session.choose('a',0,'a');
+  assert.throws(()=>session.cancelChoice('b'),/другого игрока/);
+  session.target('a',monster('a'),'a');
+  assert.throws(()=>session.cancelChoice('a'),/Сейчас нельзя выполнять ход/);
+});
+
+test('между действием героя и ответной атакой монстра есть 500 мс ожидания', () => {
+  const {session,entity,monster,advance} = make();
+  session.roll('a','a');session.choose('a',0,'a');session.target('a',monster('a'),'a');
+  assert.equal(session.snapshot().phase,'enemy');
+  assert.equal(entity('a')?.hp,11);
+  advance(499);session.tick(()=>true,id=>id);
+  assert.equal(entity('a')?.hp,11);
+  advance(1);session.tick(()=>true,id=>id);
+  assert.equal(entity('a')?.hp,9);
+  assert.equal(session.snapshot().activePlayerId,'b');
+  assert.ok(session.snapshot().events.some(e=>e.visual?.type==='strike' && e.visual.targetId==='a'));
+});
+
+test('при гибели героя новый сосед определяется среди живых участников', () => {
+  const heroes:TestHero[]=[{id:'a',heroId:'warrior'},{id:'b',heroId:'healer'},{id:'c',heroId:'warrior'},{id:'d',heroId:'warrior'},{id:'e',heroId:'archer'}];
+  const {session,entity,monster,act} = make(heroes);
+  const state=(session as unknown as {combatants:Map<string,{hp:number}>}).combatants;
+  state.get('b')!.hp=1;
+  act('a','b');
+  assert.equal(entity('b')?.alive,false);
+  // C becomes A's next living clockwise neighbour, not the dead B.
+  session.roll('c','c');session.choose('c',0,'c');
+  assert.ok(session.snapshot().availableTargetIds.includes(monster('a')));
+  assert.ok(session.snapshot().availableTargetIds.includes(monster('d')));
+});
+
+test('после смерти босса без своих монстров атакующий достаёт любого живого монстра и героя', () => {
+  const heroes:TestHero[]=[{id:'a',heroId:'warrior'},{id:'b',heroId:'warrior'},{id:'c',heroId:'warrior'},{id:'d',heroId:'warrior'}];
+  const {session,monster} = make(heroes);
+  const state=(session as unknown as {combatants:Map<string,{hp:number;alive:boolean}>}).combatants;
+  state.get('boss')!.hp=0;state.get('boss')!.alive=false;
+  state.get(monster('a'))!.hp=0;state.get(monster('a'))!.alive=false;
+  session.roll('a','a');session.choose('a',0,'a');
+  assert.ok(session.snapshot().availableTargetIds.includes(monster('c')));
+  assert.ok(session.snapshot().availableTargetIds.includes('c'));
+});
+
+test('после перехода на следующий этаж набор монстров заменён и ID не совпадают', () => {
+  const {session} = make();
+  const oldIDs = session.snapshot().combatants.filter(c=>c.kind==='monster').map(c=>c.id);
+  const state=(session as unknown as {combatants:Map<string,{kind:string;alive:boolean;hp:number}>}).combatants;
+  for(const c of state.values())if(c.kind!=='hero'){c.alive=false;c.hp=0;}
+  session.pass('a','a');session.continueFloor();
+  const next=session.snapshot().combatants.filter(c=>c.kind==='monster');
+  assert.ok(next.every(c=>c.alive && c.id.includes('monster:2:')));
+  assert.ok(next.every(c=>!oldIDs.includes(c.id)));
+  assert.equal(next.length,2);
+});
+
+test('журнал содержит идентификаторы для анимаций событий', () => {
+  const {session,monster} = make();
+  session.roll('a','a');session.choose('a',0,'a');session.target('a',monster('a'),'a');
+  const e=session.snapshot().events;
+  assert.ok(e.some(x=>x.visual?.type==='strike' && x.visual.targetId===monster('a')));
+  assert.ok(e.some(x=>x.visual?.type==='turn' && x.visual.targetId==='a'));
+});
+
+test('если игрок покинул комнату во время паузы перед монстром, следующий ход не пропускается', () => {
+  const {session,monster}=make([{id:'a',heroId:'warrior'},{id:'b',heroId:'warrior'},{id:'c',heroId:'warrior'}]);
+  session.roll('a','a');session.choose('a',0,'a');session.target('a',monster('a'),'a');
+  assert.equal(session.snapshot().phase,'enemy');
+  session.remove('a','a');
+  assert.equal(session.snapshot().phase,'roll');
+  assert.equal(session.activePlayer(),'b');
 });

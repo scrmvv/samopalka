@@ -138,10 +138,14 @@ function App() {
     await act<SessionResponse>('room:join', { nickname, code: joinCode.toUpperCase().trim(), token: sessionToken() }, rememberSession);
   }
   async function leaveRoom() {
-    await act<boolean>('room:leave', {}, () => {
+    // Leaving must never be blocked by the turn timer or another pending request.
+    const clearSession = () => {
       storage.remove('room'); setRoom(null); setPlayerId(''); setError('');
       window.history.replaceState({}, '', '/');
-    });
+    };
+    if (!online) { clearSession(); return; }
+    try { await call<boolean>('room:leave', {}); }
+    finally { clearSession(); }
   }
   function openSettings() {
     if (!room) return;
@@ -210,9 +214,9 @@ function App() {
         </div> : <div className="preview-active"><CheckCheck size={22}/><strong>Отряд собран</strong><p>Можно отправляться в подземелье.</p></div>}
       </section>
       <section className="selection panel"><div className="section-title"><div><span className="overline">ВЫБОР ПЕРСОНАЖА</span><h2>{room.status === 'lobby' ? 'Выбери героя' : 'Твой отряд'}</h2></div><div className="selection-icon"><Swords size={19}/></div></div>
-        <p className="muted selection-descr">{room.status === 'lobby' ? 'У каждого героя свои способности. Повторять выбор нельзя.' : 'Выбранные герои готовы к спуску.'}</p>
-        <div className="hero-grid">{HEROES.map(hero => { const claimed = room.players.some(p => p.id !== playerId && p.heroId === hero.id); const selected = me?.heroId === hero.id; const inParty = room.status !== 'lobby' && claimed; return <button key={hero.id} className={'hero ' + (selected ? 'hero-selected' : '') + (claimed && room.status === 'lobby' ? 'hero-claimed' : '') + (inParty ? ' hero-party' : '') + (room.status !== 'lobby' ? ' hero-locked' : '')} style={{ '--hero-color': hero.color } as React.CSSProperties} disabled={claimed || busy || room.status !== 'lobby'} onClick={() => void act('room:hero', hero.id as HeroId)}>
-          <div className="hero-symbol"><HeroSprite id={hero.id}/></div><div className="hero-body"><div className="hero-name">{hero.name}</div><div className="hero-title">{hero.title}</div><div className="hero-vitals"><span className="hero-vitals-label">ЗДОРОВЬЕ</span><span className="hero-hp">♥ <b>{hero.hp}</b></span></div></div>{selected && <span className="hero-check" title="Ваш герой"><Check size={13}/></span>}{claimed && <span className="claimed-label">{room.status === 'lobby' ? 'ЗАНЯТ' : 'В ОТРЯДЕ'}</span>}
+        <p className="muted selection-descr">{room.status === 'lobby' ? 'У каждого героя свои способности. Несколько игроков могут выбрать один класс.' : 'Выбранные герои готовы к спуску.'}</p>
+        <div className="hero-grid">{HEROES.map(hero => { const claimed = room.players.some(p => p.id !== playerId && p.heroId === hero.id); const selected = me?.heroId === hero.id; const inParty = room.status !== 'lobby' && claimed; return <button key={hero.id} className={'hero ' + (selected ? 'hero-selected' : '') +  + (inParty ? ' hero-party' : '') + (room.status !== 'lobby' ? ' hero-locked' : '')} style={{ '--hero-color': hero.color } as React.CSSProperties} disabled={busy || room.status !== 'lobby'} onClick={() => void act('room:hero', hero.id as HeroId)}>
+          <div className="hero-symbol"><HeroSprite id={hero.id}/></div><div className="hero-body"><div className="hero-name">{hero.name}</div><div className="hero-title">{hero.title}</div><div className="hero-vitals"><span className="hero-vitals-label">ЗДОРОВЬЕ</span><span className="hero-hp">♥ <b>{hero.hp}</b></span></div></div>{selected && <span className="hero-check" title="Ваш герой"><Check size={13}/></span>}
         </button>; })}</div>
       </section></div>
       <section className="invite panel">

@@ -635,7 +635,8 @@
 .table-seat-card .combat-token-stats,.table-monster-card .combat-token-stats{max-width:116px}
 
 /* Make stacked top/bottom tokens breathe a bit more. */
-.table-seat .table-seat-card,.table-monster .table-monster-card{backdrop-filter: blur(1px);}
+/* No backdrop blur on entity hitboxes: it created visible square patches over the dungeon. */
+.table-seat .table-seat-card, .table-monster .table-monster-card, .table-boss-core .boss-card { backdrop-filter: none; -webkit-backdrop-filter: none; }
 .table-seat.active .table-seat-card::after,.table-monster.active .table-monster-card::after{opacity:.32}
 
 @media (max-width: 900px){
@@ -649,4 +650,148 @@
   .combat-token-stats{font-size:9px;padding:2px 3px;gap:3px;min-height:14px}
   .boss-card .combat-token-stats{font-size:10px}
   .table-seat-card .combat-token-stats,.table-monster-card .combat-token-stats{max-width:78px}
+}
+
+
+/* Stage 3.2 bugfix: fresh journal entries at the top and readable reset action. */
+.compact-log .battle-events{overflow-y:auto;scrollbar-color:#68757a #172128;scrollbar-width:thin;overscroll-behavior:contain}
+.battle-target-hint{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.battle-undo-choice{border:1px solid #bfa176;background:#15252a;color:#f1ce8e;padding:8px 10px;white-space:nowrap;font:10px/1.4 var(--pixel);cursor:pointer}
+.battle-undo-choice:hover:not(:disabled){background:#2c3633;border-color:#f4d99c}
+.battle-undo-choice:disabled{opacity:.55;cursor:default}
+/* Animated 8-bit glow, not a large UI overlay: it never intercepts target clicks. */
+.battle-token-flash{position:absolute;inset:-8px;border-radius:8px;pointer-events:none;z-index:5;animation:battle-flash 1.05s ease-out forwards;border:3px solid transparent}
+.battle-token-flash.flash-strike{--flash:#f87968;border-color:var(--flash)}
+.battle-token-flash.flash-heal{--flash:#8bea9e;border-color:var(--flash)}
+.battle-token-flash.flash-shield{--flash:#8bd0ff;border-color:var(--flash)}
+.battle-token-flash.flash-mana{--flash:#cc9afc;border-color:var(--flash)}
+.battle-token-flash.flash-turn{--flash:#f5d38a;border-color:var(--flash)}
+@keyframes battle-flash{0%{opacity:0;transform:scale(.89);box-shadow:0 0 0 0 transparent}20%{opacity:1;transform:scale(1.04);box-shadow:0 0 12px 5px var(--flash)}65%{opacity:.8;transform:scale(1.01)}100%{opacity:0;transform:scale(1.15);box-shadow:0 0 1px transparent}}
+@media(prefers-reduced-motion:reduce){.battle-token-flash{animation:none;outline:2px solid var(--flash);opacity:.8}}
+
+/* Laptop readability (13-inch displays, 100% browser zoom)
+   Keep controls next to the board, but do not shrink the board based on viewport height. */
+@media (min-width: 1081px) and (max-width: 1550px) {
+  .battle-shell {
+    width: calc(100% - 28px);
+    max-width: 1480px;
+    padding: 14px 0 28px;
+  }
+
+  .battle-topline { margin-bottom: 12px; }
+  .battle-topline h1 { font-size: 20px; margin: 4px 0; }
+  .battle-topline>div:first-child>p { font-size: 11px; }
+  .battle-shell .overline { font-size: 10px; }
+  .battle-layout-circular {
+    grid-template-columns: minmax(0, 1.65fr) minmax(360px, 0.95fr);
+    gap: 12px;
+    align-items: start;
+  }
+  .battle-stage-circle {
+    min-width: 0;
+    padding: 10px;
+    overflow: clip;
+  }
+  .battle-stage-circle .table-board {
+    width: min(100%, 790px);
+    max-width: 100%;
+    min-width: 0;
+    aspect-ratio: 1 / 1;
+    margin-inline: auto;
+  }
+  .battle-side-column {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-width: 0;
+  }
+  .battle-controls { grid-column: auto; }
+  .battle-panel-combined, .battle-log, .battle-controls { padding: 12px; }
+
+  /* Text should be legible at native scale without destroying pixel styling. */
+  .battle-section-heading h2 { font-size: 11px; line-height: 1.6; }
+  .battle-section-heading > span { font-size: 12px; }
+  .battle-die { min-height: 90px; gap: 7px; padding: 8px 5px; }
+  .battle-die strong { font-size: 11px; line-height: 1.55; min-height: 32px; }
+  .battle-die-no { font-size: 11px; }
+  .battle-roll-note, .battle-choice-label { font-size: 12px; line-height: 1.55; }
+  .battle-roll-results .battle-die { min-width: 0; flex: 1 1 0; max-width: none; }
+  .artifact-placeholder { min-width: 0; padding: 10px 8px; gap: 8px; }
+  .artifact-placeholder strong { font-size: 10px; }
+  .artifact-placeholder small { font-size: 12px; line-height: 1.45; }
+  .battle-pass-link, .battle-leave { font-size: 12px; }
+  .battle-action-buttons .button { min-height: 50px; font-size: 13px; }
+  .battle-event { font-size: 12px; line-height: 1.6; }
+  .compact-log .battle-events { max-height: 310px; }
+  .battle-target-hint { font-size: 11px; }
+  .combat-token-stats { font-size: 12px; }
+  .table-seat-card small { font-size: 11px; }
+  .table-monster-card strong { font-size: 10px; }
+}
+
+/* Narrower laptops: prioritise a readable board and let the document scroll,
+   rather than compressing every control to microscopic sizes. */
+@media (min-width: 701px) and (max-width: 1080px) {
+  .battle-shell { width: calc(100% - 28px); padding: 14px 0 28px; }
+  .battle-layout-circular { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
+  .battle-stage-circle { padding: 10px; min-width: 0; }
+  .battle-stage-circle .table-board {
+    width: min(100%, 800px);
+    min-width: 0;
+    max-width: 100%;
+    aspect-ratio: 1 / 1;
+    margin: 0 auto;
+  }
+  .battle-side-column { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+  .battle-panel-combined, .battle-log, .battle-controls { padding: 14px; }
+  .battle-controls { grid-column: 1 / -1; }
+  .battle-section-heading h2 { font-size: 11px; }
+  .battle-die strong { font-size: 10px; }
+  .battle-roll-note, .battle-choice-label, .battle-event { font-size: 12px; }
+  .battle-pass-link { font-size: 12px; }
+  .artifact-placeholder strong { font-size: 10px; }
+  .artifact-placeholder small { font-size: 11px; }
+  .table-monster-card strong { font-size: 10px; }
+  .table-seat-card small { font-size: 11px; }
+  .combat-token-stats { font-size: 11px; }
+}
+
+@media (min-width: 701px) and (max-width: 800px) {
+  .battle-side-column { grid-template-columns: minmax(0, 1fr); }
+  .battle-controls { grid-column: auto; }
+}
+
+
+/* Fix entity card overflow on desktop: keep their transparent hit areas compact.
+   Positions are separately inset in boardLayout.ts so name/role/HP stay on-screen. */
+.table-board .table-seat-card { min-height: 0; padding: 2px 3px; }
+.table-board .table-monster-card { min-height: 0; padding: 2px 3px; }
+.table-board .boss-card { min-height: 0; padding: 4px 3px; }
+/* Do not reintroduce blur during any of the attack/heal/turn animations. */
+.table-board .token-interaction { backdrop-filter: none; -webkit-backdrop-filter: none; }
+
+
+/* Exit confirmation always sits above victory/rest screens and dims the entire viewport. */
+.battle-exit-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(3, 6, 9, .86);
+  isolation: isolate;
+}
+.battle-exit-overlay .battle-confirm {
+  position: relative;
+  z-index: 1;
+  width: min(420px, 100%);
+  max-height: calc(100dvh - 40px);
+  overflow-y: auto;
+  box-shadow: 0 14px 48px rgba(0, 0, 0, .7), 6px 6px 0 #05090d;
+}
+.battle-exit-overlay .confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
 }

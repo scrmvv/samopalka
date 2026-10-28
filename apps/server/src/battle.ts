@@ -1,5 +1,5 @@
 import { randomInt } from 'node:crypto';
-import { HEROES, HERO_DICE, type BattleSnapshot, type BattleEvent, type HeroId, type CombatantSnapshot, type PendingAction } from '@samopalka/shared';
+import { HEROES, HERO_DICE, type BattleSnapshot, type BattleEvent, type HeroId, type CombatantSnapshot, type PendingAction, type BattleVisual } from '@samopalka/shared';
 import { FOES, type FoeDefinition } from './foes.js';
 
 export class BattleError extends Error {}
@@ -38,6 +38,8 @@ export class BattleSession {
   private absent = new Set<string>();
   private eventId = 0;
   private result: BattleSnapshot['result'] = null;
+  private pendingMonsterTurn: string | null = null;
+  private readonly enemyPauseMs = 500;
   private readonly durations = turnDurations();
 
   constructor(
@@ -62,8 +64,8 @@ export class BattleSession {
     this.log('Начало первого этажа. Каждый герой сражается со своим монстром; босс ходит после полного круга.', 'system');
   }
 
-  private log(text: string, kind: BattleEvent['kind'] = 'system') {
-    this.events.push({ id: ++this.eventId, text, kind });
+  private log(text: string, kind: BattleEvent['kind'] = 'system', visual?: BattleVisual) {
+    this.events.push({ id: ++this.eventId, text, kind, ...(visual ? { visual } : {}) });
     if (this.events.length > 120) this.events.shift();
   }
 
@@ -82,7 +84,7 @@ export class BattleSession {
     const bossDeck = FOES.filter(f=>f.floor===this.floor && f.boss);
     for (const playerId of this.playerIds) {
       const foe = this.drawFoe(monsterDeck);
-      const id = `monster:${playerId}`;
+      const id = `monster:${this.floor}:${playerId}`;
       this.foeDefinitions.set(id, foe);
       this.combatants.set(id, { id, kind: 'monster', ownerId: playerId, name: foe.name,
         hp: foe.hp, maxHp: foe.hp, shield: 0, mana: 0, maxMana: 0, alive: true });
@@ -105,11 +107,12 @@ export class BattleSession {
     if (this.deadlineAt === null || this.now() >= this.deadlineAt) throw new BattleError('Время хода истекло.');
   }
 
+  /** Neighbours are the nearest LIVING seats in the clockwise ring, even after deaths. */
   private neighboringIds(playerId: string): string[] {
-    const index = this.playerIds.indexOf(playerId);
-    if (index < 0) return [];
-    const n = this.playerIds.length;
-    return [...new Set([this.playerIds[(index - 1 + n) % n]!, this.playerIds[(index + 1) % n]!])];
+    const alive = this.playerIds.filter(id => this.actor(id)?.alive);
+    const index = alive.indexOf(playerId);
+    if (index < 0 || alive.length < 2) return [];
+    return [...new Set([alive[(index - 1 + alive.length) % alive.length]!, alive[(index + 1) % alive.length]!])];
   }
 
   private possibleTargets(playerId: string, action: PendingAction): string[] {
@@ -120,10 +123,15 @@ export class BattleSession {
     if (action.kind === 'heal' || action.kind === 'shield') return heroes;
     if (action.kind === 'strike') {
       const adjacent = [playerId, ...neighbors];
-      const foes = [...this.combatants.values()].filter(c => c.kind === 'monster' && c.alive && c.ownerId && adjacent.includes(c.ownerId)).map(c => c.id);
       const ownMonsters = [...this.combatants.values()].some(c => c.kind === 'monster' && c.alive && c.ownerId === playerId);
-      const boss = !ownMonsters && this.actor('boss')?.alive ? ['boss'] : [];
-      return [...new Set([...foes, ...boss, ...neighbors.filter(id => id !== playerId && this.actor(id)?.alive)])];
+      const bossAlive = this.actor('boss')?.alive;
+      // Once the boss is defeated and the acting hero has no personal monsters,
+      // everyone else and every remaining monster become reachable.
+      const longRange = !bossAlive && !ownMonsters;
+      const foes = [...this.combatants.values()].filter(c => c.kind === 'monster' && c.alive && (longRange || (c.ownerId !== null && adjacent.includes(c.ownerId)))).map(c => c.id);
+      const heroTargets = longRange ? this.livingHeroes().filter(id=>id!==playerId) : neighbors;
+      const boss = !ownMonsters && bossAlive ? ['boss'] : [];
+      return [...new Set([...foes, ...boss, ...heroTargets.filter(id => id !== playerId && this.actor(id)?.alive)])];
     }
     return [];
   }
@@ -166,7 +174,7 @@ export class BattleSession {
     if (effect.kind === 'mana') {
       const target = this.actor(playerId)!;
       target.mana += effect.value;
-      this.log(`${playerName} получает ${effect.value} маны (сейчас ${target.mana}).`, 'action');
+      this.log(`${playerName} получает ${effect.value} маны (сейчас ${target.mana}).`, 'action', { type: 'mana', targetId: playerId });
       this.completeAction(playerId);
     } else if (effect.kind === 'empty') {
       this.log('Пустая грань: эффект отсутствует.', 'action');
@@ -183,6 +191,17 @@ export class BattleSession {
     }
   }
 
+  /** Return to the already rolled pair without rerolling or resetting the timer. */
+  cancelChoice(playerId: string) {
+    this.assertActive(playerId);
+    if (this.phase !== 'target' || !this.dice || !this.pendingAction) {
+      throw new BattleError('Отменить можно только выбор цели до применения действия.');
+    }
+    this.phase = 'choose';
+    this.pendingAction = null;
+    this.log('Выбор грани отменён. Можно выбрать другой выпавший результат.', 'system');
+  }
+
   /** Damage is the same calculation for all monsters, bosses and heroes. */
   private damage(target: CombatantSnapshot, amount: number, sourceName: string) {
     const absorbed = Math.min(target.shield, amount);
@@ -190,7 +209,7 @@ export class BattleSession {
     target.shield -= absorbed;
     target.hp -= applied;
     if (target.hp <= 0) { target.hp = 0; target.alive = false; }
-    this.log(`${sourceName} → «${target.name}»: ${applied} урона${absorbed ? `, щит поглотил ${absorbed}` : ''}.`, 'action');
+    this.log(`${sourceName} → «${target.name}»: ${applied} урона${absorbed ? `, щит поглотил ${absorbed}` : ''}.`, 'action', { type: 'strike', targetId: target.id });
     if (!target.alive) {
       this.log(`${target.name} погибает.`, 'system');
       if (target.kind === 'hero') this.transferMonsters(target.id);
@@ -223,10 +242,10 @@ export class BattleSession {
     } else if (action.kind === 'heal') {
       const recovered = Math.min(action.value, target.maxHp - target.hp);
       target.hp += recovered;
-      this.log(`${playerName}: лечение «${target.name}» на ${recovered} здоровья.`, 'action');
+      this.log(`${playerName}: лечение «${target.name}» на ${recovered} здоровья.`, 'action', { type: 'heal', targetId: target.id });
     } else if (action.kind === 'shield') {
       target.shield += action.value;
-      this.log(`${playerName}: «${target.name}» получает ${action.value} щита (всего ${target.shield}).`, 'action');
+      this.log(`${playerName}: «${target.name}» получает ${action.value} щита (всего ${target.shield}).`, 'action', { type: 'shield', targetId: target.id });
     } else throw new BattleError('Этот эффект не требует цели.');
     this.completeAction(playerId);
   }
@@ -239,7 +258,7 @@ export class BattleSession {
     }
     if (this.livingEnemies().length === 0) {
       if (this.floor === 6) this.finish('six_floors', living, 'Шестой этаж пройден! Победа отряда.');
-      else { this.phase = 'rest'; this.deadlineAt = null; this.dice = null; this.pendingAction = null; this.log(`Этаж ${this.floor} пройден. Начинается привал.`, 'system'); }
+      else { this.phase = 'rest'; this.deadlineAt = null; this.dice = null; this.pendingAction = null; this.pendingMonsterTurn = null; this.log(`Этаж ${this.floor} пройден. Начинается привал.`, 'system'); }
       return true;
     }
     return false;
@@ -247,7 +266,7 @@ export class BattleSession {
 
   private finish(reason: NonNullable<BattleSnapshot['result']>['reason'], winnerIds: string[], message: string) {
     this.result = { reason, winnerIds };
-    this.phase = 'finished'; this.deadlineAt = null; this.dice = null; this.pendingAction = null;
+    this.phase = 'finished'; this.deadlineAt = null; this.dice = null; this.pendingAction = null; this.pendingMonsterTurn = null;
     this.log(message, 'system');
   }
 
@@ -264,6 +283,7 @@ export class BattleSession {
     const monsters = [...this.combatants.values()].filter(c => c.kind === 'monster' && c.alive && c.ownerId === playerId);
     for (const monster of monsters) {
       if (!target.alive) break;
+      this.log(`Ход монстра «${monster.name}».`, 'turn', {type:'turn',targetId:monster.id});
       this.attackByEnemy(monster, target);
     }
   }
@@ -274,7 +294,7 @@ export class BattleSession {
     if (!boss?.alive || !rule) return;
     const candidates = this.livingHeroes();
     if (!candidates.length) return;
-    this.log(`Ход босса «${boss.name}».`, 'turn');
+    this.log(`Ход босса «${boss.name}».`, 'turn', { type:'turn',targetId:'boss' });
     if (rule.allHeroes) {
       for (const id of candidates) {
         const target = this.actor(id);
@@ -300,9 +320,12 @@ export class BattleSession {
     }
     this.pendingAction = null;
     if (this.checkTerminal()) return;
-    this.monsterPhase(playerId);
-    if (this.checkTerminal()) return;
-    this.advanceTurn();
+    // Short, server-controlled transition prevents simultaneous hero/enemy events
+    // and leaves room for a visible hit/turn animation on every client.
+    this.phase = 'enemy';
+    this.pendingMonsterTurn = playerId;
+    this.deadlineAt = this.now() + this.enemyPauseMs;
+
   }
 
   pass(playerId: string, playerName: string) {
@@ -327,6 +350,9 @@ export class BattleSession {
       this.log(`${hero.name}: ${wasDead?'возвращается в отряд, ':''}восстанавливает здоровье (2 + ${rolled}) → ${hero.hp}/${hero.maxHp}.`, 'system');
     }
     this.setupEnemies();
+    this.pendingMonsterTurn = null;
+    this.dice = null;
+    this.pendingAction = null;
     this.round = 1;
     this.activeIndex = (this.activeIndex + 1) % this.playerIds.length;
     this.consecutiveMisses.clear();
@@ -335,6 +361,14 @@ export class BattleSession {
   }
 
   tick(isConnected: (id: string) => boolean, nameOf: (id: string) => string): string[] {
+    if (this.phase === 'enemy') {
+      if (this.deadlineAt === null || this.now() < this.deadlineAt) return [];
+      const defender = this.pendingMonsterTurn;
+      this.pendingMonsterTurn = null;
+      if (defender) this.monsterPhase(defender);
+      if (!this.checkTerminal()) this.advanceTurn();
+      return [];
+    }
     if (!['roll','choose','target'].includes(this.phase) || this.deadlineAt === null || this.now() < this.deadlineAt) return [];
     const active = this.activePlayer();
     if (!active) return [];
@@ -360,8 +394,13 @@ export class BattleSession {
     const wasActive = idx === this.activeIndex;
     // Leaving a party is different from death: those entities are removed.
     this.combatants.delete(playerId);
-    this.combatants.delete(`monster:${playerId}`);
-    this.foeDefinitions.delete(`monster:${playerId}`);
+    // Remove the leaving player's current-floor monster(s), not obsolete IDs.
+    for (const c of [...this.combatants.values()]) {
+      if (c.kind === 'monster' && c.id === `monster:${this.floor}:${playerId}`) {
+        this.combatants.delete(c.id);
+        this.foeDefinitions.delete(c.id);
+      }
+    }
     for (const c of this.combatants.values()) {
       if (c.kind === 'monster' && c.ownerId === playerId) {
         c.ownerId = this.playerIds.find(id => id !== playerId && this.actor(id)?.alive) ?? null;
@@ -379,6 +418,21 @@ export class BattleSession {
     if (idx < this.activeIndex) this.activeIndex--;
     if (this.activeIndex >= this.playerIds.length) this.activeIndex = 0;
     if (this.phase === 'finished' || this.phase === 'rest') return;
+    if (this.phase === 'enemy') {
+      // A player may leave (or be kicked) during the half-second response delay.
+      // Resume from the next remaining participant instead of skipping a seat.
+      if (wasActive) {
+        this.pendingMonsterTurn = null;
+        if (this.checkTerminal()) return;
+        if (idx >= this.playerIds.length) {
+          this.bossPhase();
+          if (this.checkTerminal()) return;
+          this.round++;
+        }
+        this.prepareTurn(true);
+      }
+      return;
+    }
     if (this.checkTerminal()) return;
     if (wasActive) this.prepareTurn(true);
   }
@@ -412,6 +466,6 @@ export class BattleSession {
     const missed = this.consecutiveMisses.get(active) ?? 0;
     const ms = missed > 0 || this.absent.has(active) ? this.durations.shortMs : this.durations.normalMs;
     this.deadlineAt = this.now() + ms;
-    this.log(first ? 'Первый ход этажа: бросьте два кубика.' : `Следующий ход (${ms / 1000} сек.).`, 'turn');
+    this.log(first ? 'Первый ход этажа: бросьте два кубика.' : `Следующий ход (${ms / 1000} сек.).`, 'turn', {type:'turn',targetId:active});
   }
 }

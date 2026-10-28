@@ -93,6 +93,7 @@ io.on('connection', (socket: Socket) => {
   }));
   socket.on('game:roll', (_input, ack: Done) => handle(ack, () => manager.rollDice(socket.id)));
   socket.on('game:choose', (index, ack: Done) => handle(ack, () => manager.selectDice(socket.id, index)));
+  socket.on('game:cancel-choice', (_input, ack: Done) => handle(ack, () => manager.cancelDiceChoice(socket.id)));
   socket.on('game:target', (targetId, ack: Done) => handle(ack, () => manager.selectTarget(socket.id, targetId)));
   socket.on('game:pass', (_input, ack: Done) => handle(ack, () => manager.passTurn(socket.id)));
   socket.on('game:next-floor', (_input, ack: Done) => handle(ack, () => manager.nextFloor(socket.id)));

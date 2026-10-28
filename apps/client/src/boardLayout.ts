@@ -1,6 +1,6 @@
 /** Radius is the distance from centre, measured as a percentage of the square table. */
-export const PLAYER_RING_RADIUS = 41;
-export const MONSTER_RING_RADIUS = 20;
+export const PLAYER_RING_RADIUS = 38.5;
+export const MONSTER_RING_RADIUS = 21;
 
 /** Position a token on a ring around the centre of the entire square board. */
 export function radialPosition(index: number, total: number, radiusPercent: number) {

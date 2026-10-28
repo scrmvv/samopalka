@@ -21,7 +21,8 @@ test('комната: создание, 2 игрока, выбор героев,
   assert.equal(manager.snapshot(code)?.players.length, 2);
   assert.throws(() => manager.start('socket-host'), RoomError);
   manager.chooseHero('socket-host', 'warrior');
-  assert.throws(() => manager.chooseHero('socket-guest', 'warrior'), /уже выбрал/);
+  manager.chooseHero('socket-guest', 'warrior');
+  assert.equal(manager.snapshot(code)?.players[1]?.heroId, 'warrior');
   manager.chooseHero('socket-guest', 'knight');
   manager.setReady('socket-host', true);
   manager.setReady('socket-guest', true);
@@ -84,4 +85,26 @@ test('валидация и запрет дублирования имени', (
   assert.throws(() => manager.join({ code, nickname: 'host', token: 'd1234567890123456' }, 'dupe'), /занят/);
   assert.throws(() => manager.chooseHero('host', 'fake'), /не найден/);
   assert.throws(() => manager.setReady('host', true), /выберите героя/);
+});
+
+test('можно выбирать одинаковый класс персонажа и начать партию',()=>{
+  const {manager}=make();
+  const {code}=manager.create(host,'h');
+  manager.join({...guest,code},'g');
+  manager.chooseHero('h','warrior');manager.chooseHero('g','warrior');
+  manager.setReady('h',true);manager.setReady('g',true);
+  manager.start('h');
+  assert.equal(manager.snapshot(code)?.game?.combatants.filter(c=>c.kind==='hero').length,2);
+});
+
+test('можно покинуть комнату даже после истечения таймера',()=>{
+  const {manager,advance}=make();
+  const {code}=manager.create(host,'h');
+  manager.join({...guest,code},'g');
+  manager.chooseHero('h','warrior');manager.chooseHero('g','healer');
+  manager.setReady('h',true);manager.setReady('g',true);
+  manager.start('h');
+  advance(60_100);
+  manager.leave('h');
+  assert.equal(manager.snapshot(code)?.players.length,1);
 });

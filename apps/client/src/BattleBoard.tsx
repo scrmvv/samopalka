@@ -1,5 +1,6 @@
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { ArrowLeft, CheckCircle2, Clock3, Dice5, Heart, MessageSquare, ScrollText, X } from 'lucide-react';
 import { HEROES, HERO_DICE, type DiceFace, type RoomSnapshot, type CombatantSnapshot } from '@samopalka/shared';
 import { HeroSprite } from './HeroSprite';
@@ -53,6 +54,33 @@ export function BattleBoard({room,playerId,online,busy,error,onAction,onExit,onC
   const [tick,setTick] = useState(Date.now());
   const [leaveConfirm,setLeaveConfirm] = useState(false);
   const [chatOpen,setChatOpen] = useState(false);
+  useEffect(() => {
+    if (!leaveConfirm) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setLeaveConfirm(false);
+    };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [leaveConfirm]);
+  const [flashes,setFlashes] = useState<{key:number;targetId:string;type:string}[]>([]);
+  const lastSeenEvent = useRef<number>(game.events.at(-1)?.id ?? 0);
+  const flashTimers = useRef<number[]>([]);
+  const logRef = useRef<HTMLDivElement>(null);
+  const lastLogId = game.events.at(-1)?.id ?? 0;
+  useEffect(() => {
+    const newEvents = game.events.filter(e => e.id > lastSeenEvent.current);
+    lastSeenEvent.current = lastLogId;
+    const effects = newEvents.flatMap(e => e.visual?.targetId ? [{key:e.id,targetId:e.visual.targetId,type:e.visual.type}] : []);
+    if (effects.length) {
+      setFlashes(old => [...old,...effects].slice(-12));
+      const timer = window.setTimeout(() => setFlashes(old => old.filter(item => !effects.some(e => e.key===item.key))), 1050);
+      flashTimers.current.push(timer);
+    }
+    if (logRef.current) logRef.current.scrollTop = 0;
+  }, [lastLogId, game.events]);
+  useEffect(() => () => flashTimers.current.forEach(timer => window.clearTimeout(timer)), []);
+  const visualFor = (id:string) => flashes.filter(e=>e.targetId===id);
+
   useEffect(()=> { const interval = window.setInterval(()=>setTick(Date.now()),200); return ()=>window.clearInterval(interval); },[]);
   const [serverOffset,setServerOffset] = useState(()=>game.serverTime-Date.now());
   useEffect(()=>{setServerOffset(game.serverTime-Date.now());},[game.serverTime]);
@@ -61,11 +89,11 @@ export function BattleBoard({room,playerId,online,busy,error,onAction,onExit,onC
   const mineHero = HEROES.find(h=>h.id===mine?.heroId);
   const active = room.players.find(p=>p.id===game.activePlayerId);
   const myTurn = Boolean(mine && game.activePlayerId===mine.id && online);
-  const canAct = myTurn && !busy && left>0;
+  const canAct = myTurn && !busy && left>0 && ['roll','choose','target'].includes(game.phase);
   const faces = mine?.heroId ? HERO_DICE[mine.heroId] : [];
   const activeFaces = active?.heroId ? HERO_DICE[active.heroId] : [];
-  const title = game.phase==='paused' ? 'ИГРА ПРИОСТАНОВЛЕНА' : game.phase==='rest' ? 'ПРИВАЛ' : game.phase==='finished' ? 'ПАРТИЯ ОКОНЧЕНА' : myTurn ? 'ВАШ ХОД' : `ХОДИТ: ${active?.nickname ?? 'ИГРОК'}`;
-  const awaiting = !online ? 'Соединение прервано. Возвращаемся в игру…' : game.phase==='paused' ? 'В комнате не осталось участников.' : game.phase==='rest' ? 'Этаж пройден. Хост может открыть следующий этаж.' : game.phase==='finished' ? 'Результат партии отображается на поле.' : myTurn ? game.phase==='roll' ? 'Бросьте два кубика.' : game.phase==='choose' ? 'Выберите одну из двух граней.' : 'Выберите подсвеченную цель на поле.' : 'Ожидайте действия другого игрока.';
+  const title = game.phase==='enemy' ? 'ХОД МОНСТРОВ' : game.phase==='paused' ? 'ИГРА ПРИОСТАНОВЛЕНА' : game.phase==='rest' ? 'ПРИВАЛ' : game.phase==='finished' ? 'ПАРТИЯ ОКОНЧЕНА' : myTurn ? 'ВАШ ХОД' : `ХОДИТ: ${active?.nickname ?? 'ИГРОК'}`;
+  const awaiting = !online ? 'Соединение прервано. Возвращаемся в игру…' : game.phase==='paused' ? 'В комнате не осталось участников.' : game.phase==='enemy' ? 'Монстры готовятся ответить…' : game.phase==='rest' ? 'Этаж пройден. Хост может открыть следующий этаж.' : game.phase==='finished' ? 'Результат партии отображается на поле.' : myTurn ? game.phase==='roll' ? 'Бросьте два кубика.' : game.phase==='choose' ? 'Выберите одну из двух граней.' : 'Выберите подсвеченную цель на поле.' : 'Ожидайте действия другого игрока.';
   const rolls = useMemo(()=>game.rolls?.map((n,i)=>({n,index:i,face: activeFaces[n-1]})) ?? [],[game.rolls,activeFaces]);
   const monsters = game.combatants.filter(c=>c.kind==='monster').map((c, i) => ({
     id:c.id, ownerId:c.ownerId, ownerNickname:room.players.find(p=>p.id===c.ownerId)?.nickname ?? 'герой',
@@ -104,7 +132,7 @@ export function BattleBoard({room,playerId,online,busy,error,onAction,onExit,onC
                 <div className="table-seat-sprite">{p.heroId ? <HeroSprite id={p.heroId} compact/> : <div className="empty-seat">+</div>}</div>
                 <strong>{p.nickname}{p.id===playerId?' · ВЫ':''}</strong>
                 <small>{hero?.name ?? 'Герой не выбран'}</small>
-                <CombatStats entity={combatants.get(p.id)}/>
+                <CombatStats entity={combatants.get(p.id)}/>{visualFor(p.id).map(e=><span key={e.key} className={'battle-token-flash flash-'+e.type} aria-hidden="true"/>)}
               </button>
             </div>;
           })}
@@ -116,11 +144,11 @@ export function BattleBoard({room,playerId,online,busy,error,onAction,onExit,onC
             const ordinal = siblings.findIndex(m=>m.id===monster.id);
             const spread = siblings.length > 1 ? (ordinal-(siblings.length-1)/2)*13 : 0;
             const ownerActive = monster.ownerId === game.activePlayerId;
-            return <div key={monster.ownerId} title={`Монстр напротив ${monster.ownerNickname}`} className={'table-monster lane-'+(index%6)+' '+(ownerActive?'active':'')} style={radialPosition(displayIndex, room.players.length, MONSTER_RING_RADIUS + spread)}>
+            return <div key={monster.id} title={`${monster.name} — напротив ${monster.ownerNickname}`} className={'table-monster lane-'+(index%6)+' '+(ownerActive?'active':'')} style={radialPosition(displayIndex, room.players.length, MONSTER_RING_RADIUS + spread)}>
               <button type="button" disabled={!canTarget(monster.id)} onClick={()=>pickTarget(monster.id)} className={'table-monster-card token-interaction '+(canTarget(monster.id)?'can-target ':'')+(!combatants.get(monster.id)?.alive?'defeated':'')}>
                 <EnemySprite variant={monster.variant}/>
                 <strong>{monster.name}</strong>
-                <CombatStats entity={combatants.get(monster.id)}/>
+                <CombatStats entity={combatants.get(monster.id)}/>{visualFor(monster.id).map(e=><span key={e.key} className={'battle-token-flash flash-'+e.type} aria-hidden="true"/>)}
               </button>
             </div>;
           })}
@@ -129,7 +157,7 @@ export function BattleBoard({room,playerId,online,busy,error,onAction,onExit,onC
             <button type="button" disabled={!canTarget('boss')} onClick={()=>pickTarget('boss')} className={'boss-card token-interaction '+(canTarget('boss')?'can-target ':'')+(!combatants.get('boss')?.alive?'defeated':'')}>
               <EnemySprite variant="boss"/>
               <strong>{combatants.get('boss')?.name ?? 'БОСС'}</strong>
-              <CombatStats entity={combatants.get('boss')}/>
+              <CombatStats entity={combatants.get('boss')}/>{visualFor('boss').map(e=><span key={e.key} className={'battle-token-flash flash-'+e.type} aria-hidden="true"/>)}
               <small>Общая цель для всех игроков</small>
             </button>
           </div>
@@ -148,7 +176,10 @@ export function BattleBoard({room,playerId,online,busy,error,onAction,onExit,onC
             <h2><Dice5 size={16}/> КУБИК И АРТЕФАКТЫ</h2>
             <span>{mineHero?.name ?? 'Герой'}</span>
           </div>
-          {game.phase === 'target' && <div className="battle-target-hint" role="status">{myTurn ? `Выберите цель: ${game.pendingAction?.label ?? 'действие'}` : `${active?.nickname ?? 'Игрок'} выбирает цель`}</div>}
+          {game.phase === 'target' && <div className="battle-target-hint" role="status">
+              <span>{myTurn ? `Выберите цель: ${game.pendingAction?.label ?? 'действие'}` : `${active?.nickname ?? 'Игрок'} выбирает цель`}</span>
+              {myTurn && <button type="button" className="battle-undo-choice" disabled={!canAct} onClick={()=>onAction('game:cancel-choice',{})}>↶ Другая грань</button>}
+            </div>}
           <div className="battle-six compact">{faces.map((face,index)=><DieCell key={index} face={face} number={index+1}/>)}</div>
           {game.phase==='choose' && game.rolls ? <>
             <div className="battle-choice-label">{myTurn ? 'ВЫПАЛИ ДВА РЕЗУЛЬТАТА — ВЫБЕРИТЕ ОДИН' : `РЕЗУЛЬТАТЫ БРОСКА: ${active?.nickname ?? 'ИГРОК'}`}</div>
@@ -166,7 +197,7 @@ export function BattleBoard({room,playerId,online,busy,error,onAction,onExit,onC
 
         <section className="battle-log panel compact-log">
           <div className="battle-section-heading compact"><h2><ScrollText size={16}/> ЖУРНАЛ</h2><span>Ход партии</span></div>
-          <div className="battle-events compact">{game.events.map(e=><p key={e.id} className={'battle-event event-'+e.kind}>{e.text}</p>)}</div>
+          <div className="battle-events compact" ref={logRef} aria-label="Журнал боя: новые события сверху">{[...game.events].reverse().map(e=><p key={e.id} className={'battle-event event-'+e.kind}>{e.text}</p>)}</div>
         </section>
 
         <section className="battle-controls panel mini-controls"><button className="battle-leave" onClick={()=>setLeaveConfirm(true)}><ArrowLeft size={15}/> Покинуть игру</button></section>
@@ -176,6 +207,18 @@ export function BattleBoard({room,playerId,online,busy,error,onAction,onExit,onC
     {chatOpen && <div className="battle-chat-drawer panel" role="dialog" aria-label="Чат"><div className="battle-section-heading compact"><h2><MessageSquare size={16}/> ЧАТ</h2><button className="battle-icon-button" type="button" onClick={()=>setChatOpen(false)} title="Закрыть"><X size={14}/></button></div><div className="chat-placeholder"><strong>Общение игроков</strong><p>Чат станет доступен в одном из следующих обновлений.</p></div></div>}
 
     {error && <div className="battle-error" role="alert">{error}<button title="Закрыть" onClick={onClearError}><X size={16}/></button></div>}
-    {leaveConfirm&&<div className="modal-backdrop"><div className="panel battle-confirm"><h2>Покинуть отряд?</h2><p>Текущая партия для остальных продолжится без вас.</p><div className="confirm-actions"><button className="button button-secondary" onClick={()=>setLeaveConfirm(false)}>Остаться</button><button className="button button-primary" onClick={()=>{setLeaveConfirm(false);onExit();}}><CheckCircle2 size={17}/> Выйти</button></div></div></div>}
+    {leaveConfirm && createPortal(
+      <div className="battle-exit-overlay" onMouseDown={event => { if (event.target === event.currentTarget) setLeaveConfirm(false); }}>
+        <div className="panel battle-confirm" role="dialog" aria-modal="true" aria-labelledby="battle-exit-title" aria-describedby="battle-exit-description">
+          <h2 id="battle-exit-title">Покинуть отряд?</h2>
+          <p id="battle-exit-description">Текущая партия для остальных продолжится без вас.</p>
+          <div className="confirm-actions">
+            <button className="button button-secondary" autoFocus onClick={()=>setLeaveConfirm(false)}>Остаться</button>
+            <button className="button button-primary" onClick={()=>{setLeaveConfirm(false);onExit();}}><CheckCircle2 size={17}/> Выйти</button>
+          </div>
+        </div>
+      </div>,
+      document.body
+    )}
   </main>;
 }

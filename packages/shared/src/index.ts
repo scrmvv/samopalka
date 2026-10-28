@@ -57,12 +57,13 @@ export type CombatantSnapshot = {
   alive: boolean;
 };
 export type PendingAction = { kind: DiceFace['kind']; value: number; label: string };
-export type BattleEvent = { id: number; kind: 'system' | 'turn' | 'dice' | 'action' | 'timeout'; text: string };
+export type BattleVisual = { type: 'turn' | 'strike' | 'heal' | 'shield' | 'mana'; actorId?: string; targetId?: string };
+export type BattleEvent = { id: number; kind: 'system' | 'turn' | 'dice' | 'action' | 'timeout'; text: string; visual?: BattleVisual };
 export type BattleSnapshot = {
   floor: number;
   round: number;
   activePlayerId: string | null;
-  phase: 'roll' | 'choose' | 'target' | 'rest' | 'paused' | 'finished';
+  phase: 'roll' | 'choose' | 'target' | 'enemy' | 'rest' | 'paused' | 'finished';
   deadlineAt: number | null;
   serverTime: number;
   rolls: [number, number] | null;
