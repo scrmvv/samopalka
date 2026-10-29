@@ -108,3 +108,42 @@ test('можно покинуть комнату даже после истеч�
   manager.leave('h');
   assert.equal(manager.snapshot(code)?.players.length,1);
 });
+
+test('новая партия: после финиша хост возвращает тот же состав в лобби', () => {
+  const { manager } = make();
+  const { code, playerId } = manager.create(host, 'h');
+  const { playerId:guestId } = manager.join({...guest, code}, 'g');
+  manager.chooseHero('h', 'knight');
+  manager.chooseHero('g', 'berserker');
+  manager.setReady('h', true);
+  manager.setReady('g', true);
+  manager.start('h');
+  assert.throws(() => manager.replay('h'), /после завершения/);
+  assert.throws(() => manager.replay('g'), /хосту/);
+  // Simulate a complete game outcome without changing production rules.
+  const room = (manager as unknown as {rooms: Map<string, {game: {phase: string}}>}).rooms.get(code)!;
+  room.game.phase = 'finished';
+  manager.replay('h');
+  const lobby = manager.snapshot(code)!;
+  assert.equal(lobby.code, code);
+  assert.equal(lobby.status, 'lobby');
+  assert.equal(lobby.game, undefined);
+  assert.deepEqual(lobby.players.map(p=>p.id), [playerId,guestId]);
+  assert.deepEqual(lobby.players.map(p=>p.heroId), ['knight','berserker']);
+  assert.ok(lobby.players.every(p=>!p.ready && p.connected));
+  assert.throws(() => manager.start('h'), /Все игроки/);
+  manager.setReady('h', true);
+  manager.setReady('g', true);
+  manager.start('h');
+  assert.equal(manager.snapshot(code)?.game?.floor,1);
+  assert.equal(manager.snapshot(code)?.game?.phase,'roll');
+  assert.throws(() => manager.replay('h'), /после завершения/);
+});
+
+test('повторный старт недоступен гостю и пока партия активна', () => {
+  const {manager}=make();
+  const {code}=manager.create(host,'h');
+  manager.join({...guest,code},'g');
+  assert.throws(() => manager.replay('h'), /после завершения/);
+  assert.throws(() => manager.replay('g'), /хосту/);
+});

@@ -329,3 +329,26 @@ test('если игрок покинул комнату во время пауз
   assert.equal(session.snapshot().phase,'roll');
   assert.equal(session.activePlayer(),'b');
 });
+
+
+test('defeated monster does not resurrect after killing a second monster', () => {
+  const {session,entity,monster,act,resolveEnemy}=make();
+  const first=monster('a');
+  const second=monster('b');
+  session.debugSetStat({id:first,field:'hp',value:2});
+  session.debugSetStat({id:second,field:'hp',value:2});
+  act('a',first);
+  assert.equal(entity(first)?.alive,false);
+  assert.equal(entity(second)?.alive,true);
+  session.pass('b','b');
+  resolveEnemy();
+  session.roll('a','a');
+  session.choose('a',0,'a');
+  assert.ok(session.snapshot().availableTargetIds.includes(second));
+  assert.ok(!session.snapshot().availableTargetIds.includes(first));
+  session.target('a',second,'a');
+  assert.equal(entity(first)?.alive,false);
+  assert.equal(entity(second)?.alive,false);
+  const board = session.snapshot().combatants.filter(c=>c.kind==='monster' && c.alive);
+  assert.deepEqual(board,[]);
+});

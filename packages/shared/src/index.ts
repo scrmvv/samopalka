@@ -26,6 +26,7 @@ export type RoomSnapshot = {
   players: PlayerPublic[];
   updatedAt: number;
   game?: BattleSnapshot;
+  debug?: { foes: { id:string; name:string; floor:number; hp:number; boss:boolean }[] };
 };
 export type Ack<T = undefined> = { ok: true; data: T } | { ok: false; error: string };
 export type CreateRoomData = { nickname: string; name: string; maxPlayers: number; token: string };
@@ -36,7 +37,7 @@ export type DiceFace = { kind: 'strike' | 'shield' | 'heal' | 'mana' | 'empty' |
 const face = (kind: DiceFace['kind'], value: number, label: string, note?: string): DiceFace => ({ kind, value, label, ...(note ? { note } : {}) });
 export const HERO_DICE: Record<HeroId, readonly DiceFace[]> = {
   warrior: [face('empty',0,'Пусто'),face('empty',0,'Пусто'),face('heal',2,'Лечение 2'),face('shield',2,'Щит 2'),face('strike',2,'Удар 2'),face('strike',2,'Удар 2')],
-  berserker: [face('empty',0,'Пусто'),face('empty',0,'Пусто'),face('special',1,'Самооборот 1'),face('strike',1,'Удар 1'),face('strike',2,'Удар 2'),face('strike',4,'Удар 4')],
+  berserker: [face('empty',0,'Пусто'),face('empty',0,'Пусто'),face('special',1,'СамоУворот 1'),face('strike',1,'Удар 1'),face('strike',2,'Удар 2'),face('strike',4,'Удар 4')],
   knight: [face('empty',0,'Пусто'),face('special',1,'Самощит 1 + Насмешка'),face('special',2,'Самощит 2 + Насмешка'),face('shield',2,'Щит 2'),face('shield',3,'Щит 3'),face('strike',2,'Удар 2')],
   healer: [face('empty',0,'Пусто'),face('mana',1,'Мана 1'),face('mana',2,'Мана 2'),face('heal',3,'Лечение 3'),face('heal',3,'Лечение 3'),face('strike',2,'Удар 2')],
   adept: [face('empty',0,'Пусто'),face('empty',0,'Пусто'),face('mana',1,'Мана 1'),face('mana',2,'Мана 2'),face('mana',2,'Мана 2'),face('mana',3,'Мана 3')],
@@ -55,8 +56,14 @@ export type CombatantSnapshot = {
   mana: number;
   maxMana: number;
   alive: boolean;
+  effects?: StatusEffect[];
 };
-export type PendingAction = { kind: DiceFace['kind']; value: number; label: string };
+export type StatusEffect = {
+  kind: 'poison' | 'weakness' | 'stun' | 'sleep' | 'paralysis' | 'dodge' | 'regeneration' | 'decay' | 'petrified';
+  amount: number;
+  sourceId?: string;
+};
+export type PendingAction = { kind: DiceFace['kind']; value: number; label: string; faceIndex?: number };
 export type BattleVisual = { type: 'turn' | 'strike' | 'heal' | 'shield' | 'mana'; actorId?: string; targetId?: string };
 export type BattleEvent = { id: number; kind: 'system' | 'turn' | 'dice' | 'action' | 'timeout'; text: string; visual?: BattleVisual };
 export type BattleSnapshot = {
@@ -70,6 +77,7 @@ export type BattleSnapshot = {
   events: BattleEvent[];
   missedTurns: Record<string,number>;
   combatants: CombatantSnapshot[];
+  diceFaces?: Record<string,DiceFace[]>;
   pendingAction: PendingAction | null;
   availableTargetIds: string[];
   result: null | { reason: 'six_floors' | 'last_survivor' | 'party_wiped'; winnerIds: string[] };

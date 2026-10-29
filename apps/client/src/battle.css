@@ -795,3 +795,67 @@
   justify-content: flex-end;
   flex-wrap: wrap;
 }
+
+
+/* Stage 3.3: unobtrusive effect indicators; keep the circular table layout unchanged. */
+.table-seat-card,.table-monster-card,.boss-card { overflow:visible; }
+.combat-effect-pills {position:absolute;top:-8px;right:-16px;z-index:6;display:flex;flex-direction:column;gap:2px;pointer-events:auto;line-height:1;}
+.combat-effect-pill {display:inline-flex;align-items:center;justify-content:center;min-width:18px;min-height:17px;padding:2px 3px;border:1px solid #8c797a;background:#322129;color:#ffb3a3;font:700 10px/1 Arial,sans-serif;box-shadow:1px 2px #03080b;}
+.combat-effect-pill.status-dodge,.combat-effect-pill.status-regeneration {background:#17362b;border-color:#689c80;color:#a0e7c0;}
+.combat-effect-pill.status-stun,.combat-effect-pill.status-sleep,.combat-effect-pill.status-paralysis {background:#28203d;border-color:#967cc2;color:#d0baff;}
+.combat-effect-pill.status-poison,.combat-effect-pill.status-decay {background:#302c18;border-color:#a99542;color:#e8d18f;}
+.battle-status-summary {display:block;margin-top:3px;color:#d2bba2;line-height:1.6;max-width:240px;}
+@media(max-width:900px){.combat-effect-pills{right:-8px;top:-5px}.combat-effect-pill{font-size:9px;min-height:15px;min-width:15px;padding:1px 2px}}
+
+/* Summoned monsters get their own positions instead of overlapping the boss. */
+.table-monster.crowded .table-monster-card{width:78px;min-height:82px;gap:2px;padding:3px 3px 5px;}
+.table-monster.crowded .battle-pixel{width:40px;height:40px;}
+.table-monster.crowded .table-monster-card strong{font-size:8px;max-width:86px;}
+.table-monster.crowded .combat-token-stats{font-size:9px;padding:2px 4px;min-height:14px;}
+@media(max-width:900px){.table-monster.crowded .table-monster-card{width:60px;min-height:66px}.table-monster.crowded .battle-pixel{width:30px;height:30px}.table-monster.crowded .table-monster-card strong{font-size:7px;max-width:66px}}
+
+
+/* 3.3.1 — Exit dialog must never create scrollbars on hover. */
+.battle-exit-overlay { overflow:hidden; overscroll-behavior:contain; }
+.battle-exit-overlay .battle-confirm {
+  box-sizing:border-box;
+  width:min(420px,calc(100vw - 48px));
+  max-width:calc(100vw - 48px);
+  max-height:none;
+  overflow:hidden;
+  padding:clamp(18px,3vw,28px);
+}
+.battle-exit-overlay .battle-confirm h2 {font-size:clamp(10px,1.3vw,14px);line-height:1.8;overflow-wrap:anywhere}
+.battle-exit-overlay .confirm-actions {display:flex;gap:12px;justify-content:flex-end;flex-wrap:wrap;margin-top:22px;padding:4px 7px 7px 3px}
+.battle-exit-overlay .confirm-actions .button {min-width:0;flex:0 1 auto;transform:none !important;box-shadow:2px 2px 0 #0b1314 !important}
+@media(max-width:380px){.battle-exit-overlay .confirm-actions .button{flex:1 1 110px}}
+
+/* Host-only test tools. Not available in ordinary server mode. */
+.battle-debug-trigger {display:inline-flex;align-items:center;gap:7px;padding:9px 12px;border:1px solid #a48b5c;background:#26313a;color:#f2d5a0;font-size:11px}
+.battle-debug-trigger:hover {background:#34414a}
+.battle-debug-overlay {position:fixed;inset:0;z-index:9900;background:rgba(2,5,8,.84);display:flex;align-items:center;justify-content:center;padding:16px;overflow-y:auto}
+.battle-debug-panel {width:min(790px,100%);max-height:calc(100dvh - 32px);overflow:auto;padding:20px 22px 24px;scrollbar-width:thin;overscroll-behavior:contain}
+.battle-debug-heading {display:flex;align-items:center;justify-content:space-between;gap:15px;margin-bottom:12px}
+.battle-debug-heading h2 {margin:0;font:13px/1.8 var(--pixel);color:#f0c78b}
+.battle-debug-hint {font-size:11px;color:#c2c9be;line-height:1.7;margin:0 0 18px}
+.battle-debug-grid {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.battle-debug-section {background:#101920;border:1px solid #42545c;padding:14px;min-width:0}
+.battle-debug-section h3 {font:10px/1.8 var(--pixel);color:#f1d193;margin:0 0 10px}
+.battle-debug-row {display:flex;gap:9px;align-items:flex-end;flex-wrap:wrap}
+.battle-debug-row>* {flex:1;min-width:0}
+.battle-debug-panel label {display:block;font-size:10px;color:#aebeb7;margin-bottom:5px}
+.battle-debug-panel input,.battle-debug-panel select {display:block;width:100%;min-width:0;height:39px;padding:6px 8px;color:#f3e6d5;background:#0a141a;border:1px solid #52656a;font-size:12px}
+.battle-debug-panel button:not(.battle-icon-button) {padding:10px 12px;border:1px solid #af9364;background:#30382f;color:#f7e0b1;min-height:37px;font-size:11px;cursor:pointer}
+.battle-debug-panel button:disabled{opacity:.5;cursor:not-allowed}
+.battle-debug-panel .battle-debug-submit {margin-top:10px;width:100%}
+.battle-debug-subnote {margin-top:8px;font-size:10px;color:#98aaa3;line-height:1.6}
+.battle-debug-panel .battle-icon-button {flex:none}
+@media(max-width:680px){.battle-debug-grid{grid-template-columns:1fr}.battle-debug-panel{padding:15px}.battle-debug-heading h2{font-size:10px}}
+
+
+/* Hotfix 3.3.2: defeated entities cannot cover interactive living targets. */
+.token-interaction.defeated,
+.table-monster-card.defeated,
+.boss-card.defeated {
+  pointer-events: none !important;
+}

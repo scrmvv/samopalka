@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { radialPosition, PLAYER_RING_RADIUS, MONSTER_RING_RADIUS } from '../../client/src/boardLayout.js';
+import { radialPosition, PLAYER_RING_RADIUS, MONSTER_RING_RADIUS, visibleMonsters } from '../../client/src/boardLayout.js';
 
 for (const count of [2, 3, 4, 5, 6]) {
   test(`positions of ${count} players/monsters form two distinct rings`, () => {
@@ -37,3 +37,57 @@ for (const count of [2, 3, 4, 5, 6]) {
     }
   });
 }
+
+
+test('defeated monsters do not render or occupy lanes, even after another monster dies', () => {
+  const combatants = [
+    {id:'hero-a', kind:'hero', alive:true},
+    {id:'monster-a', kind:'monster', alive:true},
+    {id:'monster-b', kind:'monster', alive:true},
+    {id:'boss', kind:'boss', alive:true},
+  ];
+  assert.deepEqual(visibleMonsters(combatants).map(c=>c.id), ['monster-a','monster-b']);
+  combatants[1]!.alive=false;
+  assert.deepEqual(visibleMonsters(combatants).map(c=>c.id), ['monster-b']);
+  combatants[2]!.alive=false;
+  assert.deepEqual(visibleMonsters(combatants).map(c=>c.id), []);
+  assert.ok(combatants[1] && !combatants[1].alive, 'server battle history retains the corpse');
+});
+
+test('a second live monster remains available when a preceding monster dies', () => {
+  const combatants = [
+    {id:'old-dead', kind:'monster', alive:false},
+    {id:'new-live', kind:'monster', alive:true},
+    {id:'other-dead', kind:'monster', alive:false},
+  ];
+  assert.deepEqual(visibleMonsters(combatants).map(c=>c.id), ['new-live']);
+});
+
+import { monsterRingPositions } from '../../client/src/boardLayout.js';
+
+test('два переманенных монстра имеют разные координаты даже при нормальном числе врагов', () => {
+  const players=['knight','healer'];
+  const positions=monsterRingPositions([{ownerId:'knight'},{ownerId:'knight'}],players);
+  assert.notEqual(positions[0]?.left,positions[1]?.left);
+  const dist=Math.hypot(parseFloat(positions[0]!.left)-parseFloat(positions[1]!.left),parseFloat(positions[0]!.top)-parseFloat(positions[1]!.top));
+  assert.ok(dist>25, `sprites should be clearly separated: ${dist}`);
+});
+
+test('переманенные монстры каждого владельца образуют разные кликабельные слоты', () => {
+  for (const numPlayers of [2,3,4,5,6]) {
+    const players=Array.from({length:numPlayers},(_,i)=>`p${i}`);
+    // The first owner captures one extra monster, while everyone else keeps one.
+    const monsters=[{ownerId:players[0]!},{ownerId:players[0]!},...players.slice(1).map(ownerId=>({ownerId}))];
+    const positions=monsterRingPositions(monsters,players);
+    assert.equal(positions.length,monsters.length);
+    const unique=new Set(positions.map(p=>`${p.left}|${p.top}`));
+    assert.equal(unique.size,monsters.length);
+    assert.ok(positions.every(p=>Number.isFinite(parseFloat(p.left)) && Number.isFinite(parseFloat(p.top))));
+    // Every two live tokens must have distinct centres to avoid click-blocking.
+    for(let i=0;i<positions.length;i++)for(let j=i+1;j<positions.length;j++) {
+      const a=positions[i]!,b=positions[j]!;
+      assert.ok(Math.hypot(parseFloat(a.left)-parseFloat(b.left),parseFloat(a.top)-parseFloat(b.top))>9,
+        `${numPlayers} players: overlapping monsters ${i} / ${j}`);
+    }
+  }
+});

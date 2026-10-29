@@ -1,10 +1,11 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowLeft, CheckCircle2, Clock3, Dice5, Heart, MessageSquare, ScrollText, X } from 'lucide-react';
-import { HEROES, HERO_DICE, type DiceFace, type RoomSnapshot, type CombatantSnapshot } from '@samopalka/shared';
+import { ArrowLeft, CheckCircle2, Clock3, Dice5, Heart, MessageSquare, ScrollText, Wrench, X } from 'lucide-react';
+import { HEROES, HERO_DICE, type DiceFace, type RoomSnapshot, type CombatantSnapshot, type StatusEffect } from '@samopalka/shared';
 import { HeroSprite } from './HeroSprite';
-import { radialPosition, PLAYER_RING_RADIUS, MONSTER_RING_RADIUS } from './boardLayout';
+import { DebugPanel } from './DebugPanel';
+import { radialPosition, PLAYER_RING_RADIUS, visibleMonsters, monsterRingPositions } from './boardLayout';
 
 type Props = {
   room: RoomSnapshot;
@@ -44,6 +45,25 @@ function CombatStats({ entity }:{ entity:CombatantSnapshot | undefined }) {
     {entity.kind==='hero' && <span className="combat-mana">✧ {entity.mana}/{entity.maxMana}</span>}
   </span>;
 }
+const EFFECT_INFO: Record<StatusEffect['kind'],{symbol:string;label:string}> = {
+  poison:{symbol:'☠',label:'Яд'}, weakness:{symbol:'↓',label:'Слабость'},
+  stun:{symbol:'✦',label:'Оглушение'}, sleep:{symbol:'☾',label:'Сон'},
+  paralysis:{symbol:'⚡',label:'Паралич'}, dodge:{symbol:'↝',label:'Уворот'},
+  regeneration:{symbol:'✚',label:'Регенерация'}, decay:{symbol:'−',label:'Гниение'},
+  petrified:{symbol:'◇',label:'Окаменение'}
+};
+function StatusBadges({entity}:{entity:CombatantSnapshot|undefined}){
+  const effects=(entity?.effects??[]).filter(e=>e.amount>0);
+  if(!effects.length)return null;
+  return <span className="combat-effect-pills" aria-label="Активные эффекты">
+    {effects.slice(0,3).map((effect,i)=>
+      <span key={`${effect.kind}-${i}`} className={'combat-effect-pill status-'+effect.kind}
+        title={`${EFFECT_INFO[effect.kind].label}: ${effect.amount}`}>
+        {EFFECT_INFO[effect.kind].symbol}{effect.amount}
+      </span>)}
+    {effects.length>3 && <span className="combat-effect-pill" title={effects.slice(3).map(e=>EFFECT_INFO[e.kind].label).join(', ')}>+{effects.length-3}</span>}
+  </span>;
+}
 function DieCell({face, number, action}:{face:DiceFace;number:number;action?:()=>void}) {
   const classes = 'battle-die type-'+face.kind+(action?' interactive':'');
   const contents = <><span className="battle-die-no">{number}</span><EffectMark face={face}/><strong>{face.label}</strong></>;
@@ -54,6 +74,13 @@ export function BattleBoard({room,playerId,online,busy,error,onAction,onExit,onC
   const [tick,setTick] = useState(Date.now());
   const [leaveConfirm,setLeaveConfirm] = useState(false);
   const [chatOpen,setChatOpen] = useState(false);
+  const [debugOpen,setDebugOpen] = useState(false);
+  useEffect(() => {
+    if (!leaveConfirm && !debugOpen) return;
+    const oldOverflow=document.body.style.overflow;
+    document.body.style.overflow='hidden';
+    return () => {document.body.style.overflow=oldOverflow;};
+  }, [leaveConfirm,debugOpen]);
   useEffect(() => {
     if (!leaveConfirm) return;
     const closeOnEscape = (event: KeyboardEvent) => {
@@ -90,15 +117,19 @@ export function BattleBoard({room,playerId,online,busy,error,onAction,onExit,onC
   const active = room.players.find(p=>p.id===game.activePlayerId);
   const myTurn = Boolean(mine && game.activePlayerId===mine.id && online);
   const canAct = myTurn && !busy && left>0 && ['roll','choose','target'].includes(game.phase);
-  const faces = mine?.heroId ? HERO_DICE[mine.heroId] : [];
-  const activeFaces = active?.heroId ? HERO_DICE[active.heroId] : [];
+  const faces = mine?.heroId ? (game.diceFaces?.[playerId] ?? HERO_DICE[mine.heroId]) : [];
+  const activeFaces = active?.heroId ? (game.diceFaces?.[active.id] ?? HERO_DICE[active.heroId]) : [];
   const title = game.phase==='enemy' ? 'ХОД МОНСТРОВ' : game.phase==='paused' ? 'ИГРА ПРИОСТАНОВЛЕНА' : game.phase==='rest' ? 'ПРИВАЛ' : game.phase==='finished' ? 'ПАРТИЯ ОКОНЧЕНА' : myTurn ? 'ВАШ ХОД' : `ХОДИТ: ${active?.nickname ?? 'ИГРОК'}`;
   const awaiting = !online ? 'Соединение прервано. Возвращаемся в игру…' : game.phase==='paused' ? 'В комнате не осталось участников.' : game.phase==='enemy' ? 'Монстры готовятся ответить…' : game.phase==='rest' ? 'Этаж пройден. Хост может открыть следующий этаж.' : game.phase==='finished' ? 'Результат партии отображается на поле.' : myTurn ? game.phase==='roll' ? 'Бросьте два кубика.' : game.phase==='choose' ? 'Выберите одну из двух граней.' : 'Выберите подсвеченную цель на поле.' : 'Ожидайте действия другого игрока.';
   const rolls = useMemo(()=>game.rolls?.map((n,i)=>({n,index:i,face: activeFaces[n-1]})) ?? [],[game.rolls,activeFaces]);
-  const monsters = game.combatants.filter(c=>c.kind==='monster').map((c, i) => ({
+  // Dead monsters remain in the server's history but must not occupy table space.
+  // Keep the original sprite index so survivors do not change appearance after kills.
+  const allMonsters = game.combatants.filter(c => c.kind === 'monster');
+  const monsters = visibleMonsters(allMonsters).map(c => ({
     id:c.id, ownerId:c.ownerId, ownerNickname:room.players.find(p=>p.id===c.ownerId)?.nickname ?? 'герой',
-    variant: MONSTER_VARIANTS[i % MONSTER_VARIANTS.length], name:c.name
+    variant: MONSTER_VARIANTS[allMonsters.indexOf(c) % MONSTER_VARIANTS.length], name:c.name
   }));
+  const monsterPositions = monsterRingPositions(monsters, room.players.map(p => p.id));
   const combatants = useMemo(() => new Map(game.combatants.map(c => [c.id, c])), [game.combatants]);
   const canTarget = (id: string) => canAct && game.phase==='target' && game.availableTargetIds.includes(id);
   const pickTarget = (id: string) => { if (canTarget(id)) onAction('game:target', id); };
@@ -111,6 +142,7 @@ export function BattleBoard({room,playerId,online,busy,error,onAction,onExit,onC
         <p>ЭТАЖ {game.floor} <span>·</span> {title}</p>
       </div>
       <div className="battle-toolbar">
+        {room.debug && mine?.isHost && <button type="button" className="battle-debug-trigger" onClick={()=>setDebugOpen(true)} title="Тестовая панель"><Wrench size={15}/> ТЕСТ</button>}
         <button type="button" className="battle-icon-button" onClick={()=>setChatOpen(v=>!v)} aria-pressed={chatOpen} title="Чат"><MessageSquare size={16}/></button>
         <div className={'battle-timer panel '+(left<=5?'urgent':'')}><Clock3 size={18}/><div className="battle-timer-value"><strong>{left}</strong><span>СЕК</span></div></div>
       </div>
@@ -132,41 +164,41 @@ export function BattleBoard({room,playerId,online,busy,error,onAction,onExit,onC
                 <div className="table-seat-sprite">{p.heroId ? <HeroSprite id={p.heroId} compact/> : <div className="empty-seat">+</div>}</div>
                 <strong>{p.nickname}{p.id===playerId?' · ВЫ':''}</strong>
                 <small>{hero?.name ?? 'Герой не выбран'}</small>
-                <CombatStats entity={combatants.get(p.id)}/>{visualFor(p.id).map(e=><span key={e.key} className={'battle-token-flash flash-'+e.type} aria-hidden="true"/>)}
+                <CombatStats entity={combatants.get(p.id)}/><StatusBadges entity={combatants.get(p.id)}/>{visualFor(p.id).map(e=><span key={e.key} className={'battle-token-flash flash-'+e.type} aria-hidden="true"/>)}
               </button>
             </div>;
           })}
 
           {monsters.map((monster, index)=>{
-            const ownerIndex = room.players.findIndex(p=>p.id===monster.ownerId);
-            const displayIndex = ownerIndex >= 0 ? ownerIndex : index;
-            const siblings = monsters.filter(m=>m.ownerId===monster.ownerId);
-            const ordinal = siblings.findIndex(m=>m.id===monster.id);
-            const spread = siblings.length > 1 ? (ordinal-(siblings.length-1)/2)*13 : 0;
+            // Taunted or summoned monsters may share an owner; each gets its own
+            // click-safe position rather than overlapping their sprites.
+            const crowded = monsters.length > room.players.length || monsters.some((other,i)=>i!==index && other.ownerId===monster.ownerId);
             const ownerActive = monster.ownerId === game.activePlayerId;
-            return <div key={monster.id} title={`${monster.name} — напротив ${monster.ownerNickname}`} className={'table-monster lane-'+(index%6)+' '+(ownerActive?'active':'')} style={radialPosition(displayIndex, room.players.length, MONSTER_RING_RADIUS + spread)}>
-              <button type="button" disabled={!canTarget(monster.id)} onClick={()=>pickTarget(monster.id)} className={'table-monster-card token-interaction '+(canTarget(monster.id)?'can-target ':'')+(!combatants.get(monster.id)?.alive?'defeated':'')}>
+            return <div key={monster.id} title={`${monster.name} — напротив ${monster.ownerNickname}`} className={'table-monster lane-'+(index%6)+' '+(ownerActive?'active':'')+(crowded?' crowded':'')} style={monsterPositions[index]}>
+              <button type="button" disabled={!canTarget(monster.id)} onClick={()=>pickTarget(monster.id)} className={'table-monster-card token-interaction '+(canTarget(monster.id)?'can-target ':'')}>
                 <EnemySprite variant={monster.variant}/>
                 <strong>{monster.name}</strong>
-                <CombatStats entity={combatants.get(monster.id)}/>{visualFor(monster.id).map(e=><span key={e.key} className={'battle-token-flash flash-'+e.type} aria-hidden="true"/>)}
+                <CombatStats entity={combatants.get(monster.id)}/><StatusBadges entity={combatants.get(monster.id)}/>{visualFor(monster.id).map(e=><span key={e.key} className={'battle-token-flash flash-'+e.type} aria-hidden="true"/>)}
               </button>
             </div>;
           })}
 
-          <div className="table-boss-core">
-            <button type="button" disabled={!canTarget('boss')} onClick={()=>pickTarget('boss')} className={'boss-card token-interaction '+(canTarget('boss')?'can-target ':'')+(!combatants.get('boss')?.alive?'defeated':'')}>
+          {combatants.get('boss')?.alive && <div className="table-boss-core">
+            <button type="button" disabled={!canTarget('boss')} onClick={()=>pickTarget('boss')} className={'boss-card token-interaction '+(canTarget('boss')?'can-target ':'')}>
               <EnemySprite variant="boss"/>
               <strong>{combatants.get('boss')?.name ?? 'БОСС'}</strong>
-              <CombatStats entity={combatants.get('boss')}/>{visualFor('boss').map(e=><span key={e.key} className={'battle-token-flash flash-'+e.type} aria-hidden="true"/>)}
+              <CombatStats entity={combatants.get('boss')}/><StatusBadges entity={combatants.get('boss')}/>{visualFor('boss').map(e=><span key={e.key} className={'battle-token-flash flash-'+e.type} aria-hidden="true"/>)}
               <small>Общая цель для всех игроков</small>
             </button>
-          </div>
+          </div>}
         </div>
         {(game.phase==='rest' || game.phase==='finished') && <div className="battle-milestone panel" role="status">
           <h2>{game.phase==='rest' ? `Этаж ${game.floor} пройден!` : game.result?.reason==='six_floors' ? 'Все 6 этажей пройдены!' : game.result?.reason==='last_survivor' ? 'Последний выживший!' : 'Партия окончена'}</h2>
           <p>{game.phase==='rest' ? 'Привал: после продолжения герои восстановят здоровье, затем появятся новые противники. Награды появятся в следующем обновлении.' : game.result?.reason==='party_wiped' ? 'Никому не удалось выжить.' : game.result?.winnerIds.includes(playerId) ? 'Вы среди победителей.' : 'Результат зафиксирован на сервере.'}</p>
           {game.phase==='rest' && <button className="button button-primary" disabled={!mine?.isHost || busy || !online} onClick={()=>onAction('game:next-floor',{})}>Перейти на этаж {game.floor+1}</button>}
           {game.phase==='rest' && !mine?.isHost && <small>Ожидание решения хоста</small>}
+          {game.phase==='finished' && mine?.isHost && <button className="button button-primary battle-replay" disabled={busy || !online} onClick={()=>onAction('room:replay', {})}>Вернуть отряд в лобби</button>}
+          {game.phase==='finished' && !mine?.isHost && <small>Ожидаем хоста — он может вернуть всех в лобби без нового кода комнаты.</small>}
         </div>}
       </section>
 
@@ -187,7 +219,7 @@ export function BattleBoard({room,playerId,online,busy,error,onAction,onExit,onC
           </> : <div className="battle-roll-note">{game.phase==='target' ? 'Подсвеченные фигурки доступны для выбора цели.' : 'Бросьте два кубика и выберите один результат.'}</div>}
           <div className="battle-artifact-stack">
             <div className="artifact-placeholder"><span>✦</span><div><strong>Артефакты</strong><small>Пока не получены</small></div></div>
-            <div className="artifact-placeholder"><span>◆</span><div><strong>Ресурсы</strong><small>Мана {combatants.get(playerId)?.mana ?? 0}/{combatants.get(playerId)?.maxMana ?? 3} · Щит {combatants.get(playerId)?.shield ?? 0}</small></div></div>
+            <div className="artifact-placeholder"><span>◆</span><div><strong>Ресурсы</strong><small>Мана {combatants.get(playerId)?.mana ?? 0}/{combatants.get(playerId)?.maxMana ?? 3} · Щит {combatants.get(playerId)?.shield ?? 0}</small><small className="battle-status-summary">{(combatants.get(playerId)?.effects??[]).map(e=>`${EFFECT_INFO[e.kind].label} ${e.amount}`).join(" · ") || "Нет негативных эффектов"}</small></div></div>
           </div>
           <div className="battle-action-buttons single-row">
             <button className="button button-primary" disabled={!canAct || game.phase!=='roll'} onClick={()=>onAction('game:roll',{})}><Dice5 size={18}/> Бросить кубики</button>
@@ -203,6 +235,8 @@ export function BattleBoard({room,playerId,online,busy,error,onAction,onExit,onC
         <section className="battle-controls panel mini-controls"><button className="battle-leave" onClick={()=>setLeaveConfirm(true)}><ArrowLeft size={15}/> Покинуть игру</button></section>
       </aside>
     </div>
+
+    {debugOpen && room.debug && mine?.isHost && createPortal(<DebugPanel room={room} playerId={playerId} busy={busy||!online} onAction={onAction} onClose={()=>setDebugOpen(false)}/>, document.body)}
 
     {chatOpen && <div className="battle-chat-drawer panel" role="dialog" aria-label="Чат"><div className="battle-section-heading compact"><h2><MessageSquare size={16}/> ЧАТ</h2><button className="battle-icon-button" type="button" onClick={()=>setChatOpen(false)} title="Закрыть"><X size={14}/></button></div><div className="chat-placeholder"><strong>Общение игроков</strong><p>Чат станет доступен в одном из следующих обновлений.</p></div></div>}
 

@@ -6,9 +6,11 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Server, type Socket } from 'socket.io';
 import { RoomError, RoomManager } from './rooms.js';
+import { isDebugToolsEnabled } from './debugConfig.js';
 import type { Ack } from '@samopalka/shared';
 
 const PORT = Number(process.env.PORT || 3000);
+const DEBUG_TOOLS = isDebugToolsEnabled(process.env.DEBUG_TOOLS);
 const HOST = process.env.HOST || '0.0.0.0';
 const app = express();
 app.disable('x-powered-by');
@@ -21,9 +23,9 @@ const manager = new RoomManager(code => {
 }, Date.now, (socketId, reason) => {
   const socket = io.sockets.sockets.get(socketId);
   if (socket) { socket.emit('room:kicked', reason); setTimeout(() => socket.disconnect(true), 150).unref(); }
-});
+}, DEBUG_TOOLS);
 
-app.get('/api/health', (_, res) => res.json({ ok: true, name: 'Самопалка', stage: '3.2' }));
+app.get('/api/health', (_, res) => res.json({ ok: true, name: 'Самопалка', stage: '3.3.3' }));
 app.get('/api/network', (_, res) => {
   const interfaces = Object.values(networkInterfaces()).flatMap(items => items ?? []);
   const addresses = [...new Set(interfaces.filter(ip => ip.family === 'IPv4' && !ip.internal).map(ip => ip.address))];
@@ -91,12 +93,16 @@ io.on('connection', (socket: Socket) => {
     manager.start(socket.id);
     return true;
   }));
+  socket.on('room:replay', (_input, ack: Done) => handle(ack, () => manager.replay(socket.id)));
   socket.on('game:roll', (_input, ack: Done) => handle(ack, () => manager.rollDice(socket.id)));
   socket.on('game:choose', (index, ack: Done) => handle(ack, () => manager.selectDice(socket.id, index)));
   socket.on('game:cancel-choice', (_input, ack: Done) => handle(ack, () => manager.cancelDiceChoice(socket.id)));
   socket.on('game:target', (targetId, ack: Done) => handle(ack, () => manager.selectTarget(socket.id, targetId)));
   socket.on('game:pass', (_input, ack: Done) => handle(ack, () => manager.passTurn(socket.id)));
   socket.on('game:next-floor', (_input, ack: Done) => handle(ack, () => manager.nextFloor(socket.id)));
+  for (const event of ['debug:stat','debug:face','debug:status','debug:roll','debug:foe','debug:time']) {
+    socket.on(event, (input, ack: Done) => handle(ack, () => manager.debugAction(socket.id, event, input)));
+  }
   socket.on('room:leave', (_input, ack: Done) => handle(ack, () => {
     const connection = manager.getConnection(socket.id);
     if (!connection) throw new RoomError('Вы уже вышли из комнаты.');
@@ -114,5 +120,6 @@ httpServer.listen(PORT, HOST, () => {
   console.log(`  Слушает: ${HOST}:${PORT} (доступ по Radmin VPN при разрешённом брандмауэре)`);
   const ips = Object.values(networkInterfaces()).flatMap(items => items ?? []).filter(ip => ip.family === 'IPv4' && !ip.internal);
   ips.forEach(ip => console.log(`  Сеть: http://${ip.address}:${PORT}`));
+  console.log(DEBUG_TOOLS ? '  ТЕСТОВАЯ ПАНЕЛЬ: ВКЛЮЧЕНА (только хост комнаты, не для публичного сервера)' : '  Тестовая панель отключена.');
   console.log('  Для остановки нажмите Ctrl+C.\n');
 });

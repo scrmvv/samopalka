@@ -1,6 +1,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { HEROES, type HeroId, type PlayerPublic, type RoomSnapshot, type RoomStatus } from '@samopalka/shared';
 import { BattleSession, BattleError } from './battle.js';
+import { FOES } from './foes.js';
 
 const CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const RECONNECT_MS = 60_000;
@@ -31,7 +32,7 @@ export class RoomError extends Error {}
 export class RoomManager {
   private rooms = new Map<string, Room>();
   private sockets = new Map<string, { code: string; id: string }>();
-  constructor(private readonly notify: (code: string) => void = () => {}, private readonly clock: () => number = Date.now, private readonly onKick?: (socketId: string, reason: string) => void) {}
+  constructor(private readonly notify: (code: string) => void = () => {}, private readonly clock: () => number = Date.now, private readonly onKick?: (socketId: string, reason: string) => void, private readonly debugEnabled = false) {}
 
   private code(): string {
     for (let tries = 0; tries < 100; tries++) {
@@ -92,6 +93,7 @@ export class RoomManager {
       code: r.code, name: r.name, maxPlayers: r.maxPlayers, status: r.status,
       campaign: 'Путь проклятых', updatedAt: r.updatedAt,
       ...(r.game ? { game: r.game.snapshot() } : {}),
+      ...(this.debugEnabled ? {debug: {foes: FOES.map(f=>({id:f.id,name:f.name,floor:f.floor,hp:f.hp,boss:f.boss}))}} : {}),
       players: r.players.map((p): PlayerPublic => ({
         id: p.id, nickname: p.nickname, heroId: p.heroId,
         ready: p.ready, connected: p.socketId !== null, isHost: p.id === r.hostId
@@ -201,6 +203,22 @@ export class RoomManager {
     return room.code;
   }
 
+  /** Host can return a completed match to the same lobby without losing its room code. */
+  replay(socketId: string) {
+    const { room, player } = this.requireMember(socketId);
+    this.requireHost(room, player);
+    if (room.status !== 'started' || room.game?.snapshot().phase !== 'finished') {
+      throw new RoomError('Новая партия доступна только после завершения текущей.');
+    }
+    // Keep participant identities, connections, hero picks and host. Reset readiness,
+    // so no one is put into a new game without explicitly confirming again.
+    room.status = 'lobby';
+    room.game = undefined;
+    for (const participant of room.players) participant.ready = false;
+    this.touch(room);
+    return room.code;
+  }
+
   private battleMember(socketId: string) {
     const { room, player } = this.requireMember(socketId);
     if (room.status !== 'started' || !room.game) throw new RoomError('Сначала начните партию.');
@@ -243,6 +261,25 @@ export class RoomManager {
     const {room, player, game} = this.battleMember(socketId);
     this.requireHost(room, player);
     try { game.continueFloor(); } catch (e) { if (e instanceof BattleError) throw new RoomError(e.message); throw e; }
+    this.touch(room);
+    return room.code;
+  }
+
+  debugAction(socketId: string, operation: string, payload: unknown) {
+    if(!this.debugEnabled)throw new RoomError('Отладочная панель отключена на сервере.');
+    const {room,player,game}=this.battleMember(socketId);
+    this.requireHost(room,player);
+    try {
+      switch(operation){
+        case 'debug:stat': game.debugSetStat(payload);break;
+        case 'debug:face': game.debugSetFace(payload);break;
+        case 'debug:status': game.debugApplyStatus(payload);break;
+        case 'debug:roll': game.debugSetRoll(payload);break;
+        case 'debug:foe': game.debugReplaceFoe(payload);break;
+        case 'debug:time': game.debugExtendTurn(payload);break;
+        default:throw new RoomError('Неизвестная отладочная команда.');
+      }
+    } catch(e){if(e instanceof BattleError)throw new RoomError(e.message);throw e;}
     this.touch(room);
     return room.code;
   }

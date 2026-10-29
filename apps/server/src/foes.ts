@@ -1,7 +1,7 @@
 /** Enemy catalogue transcribed from the “Монстры” sheet.
  * HP, tier, name and printed effects are source-derived.
- * For effects without an unambiguous base strike number, damage=1 is a labeled
- * temporary DEMO attack until complex words are implemented in stage 3.3.
+ * The legacy baseDamage/simulated fields are retained for compatibility with
+ * earlier data; stage 3.3 uses the printed description through effectRules.ts.
  */
 export type FoeDefinition = {id:string;name:string;hp:number;floor:number;boss:boolean;count:number;baseDamage:number;allHeroes:boolean;simulated:boolean;description:string};
 export const FOES: readonly FoeDefinition[] = [
