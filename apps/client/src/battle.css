@@ -859,3 +859,205 @@
 .boss-card.defeated {
   pointer-events: none !important;
 }
+
+
+/* Stage 3.3.4: token groups on an invisible grid; no instructional rings. */
+.table-ring {display:none!important}
+.table-board::before {opacity:.26}
+.table-seat.active .table-seat-sprite {filter:drop-shadow(0 0 8px #f7c26b) drop-shadow(0 0 13px #ffbb55)}
+.table-seat.active .table-seat-card strong {color:#ffcf81;text-shadow:0 0 8px #f6aa6299}
+.table-seat.active::after {content:'ХОД';position:absolute;left:50%;top:-18px;transform:translateX(-50%);font:8px var(--pixel);color:#ffe2a5;background:#302616;border:1px solid #b98a42;padding:3px 5px;white-space:nowrap;pointer-events:none}
+.table-monster,.table-boss-core {z-index:3}
+.battle-foe-info {position:absolute;right:-3px;top:-6px;z-index:5;width:23px;height:23px;display:grid;place-items:center;border:1px solid #c6a476;background:#18252d;color:#ffdf9c;cursor:pointer;border-radius:4px}
+.battle-foe-info:hover {background:#3a3129;color:#fff}
+.battle-foe-info.boss-info {right:1px;top:0}
+.battle-foe-overlay {position:fixed;inset:0;z-index:1100;background:#030609c9;display:grid;place-items:center;padding:20px}
+.battle-foe-card {width:min(520px,95vw);max-height:80vh;overflow:auto;padding:26px;border:2px solid #c39a62;background:#111b22;box-shadow:8px 9px #05080b;color:#f2e3cd}
+.battle-foe-card-head {display:flex;align-items:center;justify-content:space-between;color:#ccaa72;font:9px var(--pixel);gap:10px}
+.battle-foe-card-head button {background:transparent;border:1px solid #4a626b;color:#e5ddcd;cursor:pointer;padding:5px}
+.battle-foe-card h2 {font:18px var(--pixel);line-height:1.7;margin:17px 0 10px}
+.battle-foe-card h3 {font:10px var(--pixel);color:#e7bd79;margin:22px 0 10px}
+.battle-foe-parameters {font-size:12px;color:#b8d0cd}
+.battle-foe-description {white-space:pre-wrap;font-size:13px;line-height:1.8;border:1px solid #34464f;padding:15px;background:#0b141b;max-height:37vh;overflow:auto}
+.battle-foe-card .button {margin-top:16px;width:100%}
+
+/* 3.3.4.1 — wide playing surface: spend available space on actors, not margins.
+   The pixel-art backdrop continues behind the enlarged transparent overlay. */
+@media (min-width: 1081px) {
+  .battle-stage-circle .table-board {
+    width:100%;
+    max-width:none;
+    aspect-ratio:auto;
+    min-height:650px;
+    height:clamp(650px,53vw,780px);
+    margin-inline:0;
+  }
+  .battle-layout-circular {grid-template-columns:minmax(0, 1.9fr) minmax(340px, .92fr)}
+}
+@media (min-width: 701px) and (max-width: 1080px) {
+  .battle-stage-circle .table-board {width:100%;max-width:none;aspect-ratio:auto;min-height:640px;height:max(640px,70vw)}
+}
+/* Make the rendered footprint match the collision checks used by boardLayout.ts. */
+@media (min-width: 701px) {
+  .table-board .table-seat-card,
+  .table-board.players-5 .table-seat-card,
+  .table-board.players-6 .table-seat-card {width:106px;max-width:106px}
+  .table-board .table-monster-card,
+  .table-board.players-5 .table-monster-card,
+  .table-board.players-6 .table-monster-card {width:106px;max-width:106px}
+  .table-board .boss-card {width:148px;max-width:148px}
+}
+@media (min-width: 701px) and (max-width: 1080px) {
+  .table-board .table-seat-card,.table-board.players-5 .table-seat-card,.table-board.players-6 .table-seat-card {width:82px}
+  .table-board .table-monster-card,.table-board.players-5 .table-monster-card,.table-board.players-6 .table-monster-card {width:86px}
+  .table-board .boss-card {width:120px}
+}
+@media (max-width: 700px) {
+  .table-board .table-seat-card,.table-board.players-5 .table-seat-card,.table-board.players-6 .table-seat-card {width:55px}
+  .table-board .table-monster-card,.table-board.players-5 .table-monster-card,.table-board.players-6 .table-monster-card {width:58px}
+  .table-board .boss-card {width:85px}
+}
+@media (max-width: 700px) {
+  /* A tall arena avoids token collisions in portrait mode; the page may scroll. */
+  .battle-stage-circle .table-board {width:100%;height:650px;min-height:650px;aspect-ratio:auto;max-width:none}
+}
+/* Monster descriptions must not create a second horizontal scrollbar. For very
+   short screens the panel still scrolls vertically by touch/wheel. */
+.battle-foe-overlay {overflow:hidden;overscroll-behavior:contain;}
+.battle-foe-overlay .battle-foe-card {
+  box-sizing:border-box;
+  width:min(520px,calc(100vw - 32px));
+  max-width:100%;
+  max-height:calc(100dvh - 32px);
+  min-width:0;
+  overflow-x:clip;
+  overflow-y:auto;
+  scrollbar-width:none;
+  overscroll-behavior:contain;
+}
+.battle-foe-overlay .battle-foe-card::-webkit-scrollbar {display:none;width:0;height:0}
+.battle-foe-card .battle-foe-description {min-width:0;max-width:100%;overflow-x:clip;overflow-y:auto;scrollbar-width:none;overflow-wrap:anywhere;}
+.battle-foe-card .battle-foe-description::-webkit-scrollbar {display:none}
+.battle-foe-card .button {max-width:100%;box-sizing:border-box}
+@media(max-width:520px) {.battle-foe-overlay{padding:12px}.battle-foe-overlay .battle-foe-card{width:100%;padding:18px}}
+
+/* Crowded rooms: compact hitboxes and shorter labels leave room for taunted foes. */
+@media(min-width:701px){
+  .table-board.players-5 .table-seat-card,.table-board.players-6 .table-seat-card {width:84px;max-width:84px}
+  .table-board.players-5 .table-monster-card,.table-board.players-6 .table-monster-card {width:86px;max-width:86px}
+  .table-board.players-5 .boss-card,.table-board.players-6 .boss-card {width:124px}
+  .table-board.players-5 .table-seat-sprite,.table-board.players-6 .table-seat-sprite {width:49px;height:49px}
+  .table-board.players-5 .table-seat .pixel-portrait.small,.table-board.players-6 .table-seat .pixel-portrait.small {width:46px;height:46px}
+  .table-board.players-5 .table-monster .battle-pixel,.table-board.players-6 .table-monster .battle-pixel {width:41px;height:41px}
+  .table-board.players-5 .table-monster-card strong,.table-board.players-6 .table-monster-card strong {font-size:8px}
+  .table-board.players-5 .boss-card .battle-pixel,.table-board.players-6 .boss-card .battle-pixel {width:64px;height:64px}
+  .table-board.players-5 .table-seat-card .combat-token-stats,.table-board.players-6 .table-seat-card .combat-token-stats {font-size:10px}
+}
+
+/* Width of the actual board may differ greatly from viewport width when the
+   right sidebar is present. Container queries follow the measured coordinates. */
+@container battle-table (max-width: 700px) {
+  .table-board .table-seat-card,
+  .table-board.players-5 .table-seat-card, .table-board.players-6 .table-seat-card {width:82px;max-width:82px}
+  .table-board .table-monster-card,
+  .table-board.players-5 .table-monster-card, .table-board.players-6 .table-monster-card {width:86px;max-width:86px}
+  .table-board .boss-card {width:120px;max-width:120px}
+  .table-seat-sprite {width:48px;height:48px}
+  .table-seat .pixel-portrait.small {width:46px;height:46px}
+  .table-monster .battle-pixel {width:40px;height:40px}
+  .boss-card .battle-pixel {width:61px;height:61px}
+  .table-monster-card strong {font-size:8px}
+}
+@container battle-table (max-width: 620px) {
+  .table-board .table-seat-card,
+  .table-board.players-5 .table-seat-card, .table-board.players-6 .table-seat-card {width:55px;max-width:55px}
+  .table-board .table-monster-card,
+  .table-board.players-5 .table-monster-card, .table-board.players-6 .table-monster-card {width:58px;max-width:58px}
+  .table-board .boss-card {width:85px;max-width:85px}
+  .table-seat-sprite {width:34px;height:34px}
+  .table-seat .pixel-portrait.small {width:32px;height:32px}
+  .table-monster .battle-pixel {width:30px;height:30px}
+  .boss-card .battle-pixel {width:43px;height:43px}
+  .table-seat-card small {font-size:7px}
+  .table-monster-card strong {font-size:7px}
+}
+
+@container battle-table (min-width: 621px) and (max-width: 700px) {
+  .table-board.players-5 .table-seat-card,.table-board.players-6 .table-seat-card {width:70px;max-width:70px}
+  .table-board.players-5 .table-monster-card,.table-board.players-6 .table-monster-card {width:74px;max-width:74px}
+  .table-board.players-5 .boss-card,.table-board.players-6 .boss-card {width:110px;max-width:110px}
+  .table-board.players-5 .table-seat-sprite,.table-board.players-6 .table-seat-sprite {width:43px;height:43px}
+  .table-board.players-5 .table-seat .pixel-portrait.small,.table-board.players-6 .table-seat .pixel-portrait.small {width:41px;height:41px}
+  .table-board.players-5 .table-monster .battle-pixel,.table-board.players-6 .table-monster .battle-pixel {width:36px;height:36px}
+}
+
+/* Stage 3.4: coherent artifact draft, equipped gear, and correct info-button anchors. */
+.table-board .table-monster .battle-foe-info,
+.table-board .table-boss-core .battle-foe-info {
+  position:absolute;
+  right:auto;
+  bottom:auto;
+  left:calc(50% + 31px);
+  top:7px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  z-index:9;
+  width:23px;
+  height:23px;
+  padding:0;
+  transform:none;
+}
+.table-board .table-boss-core .battle-foe-info { left:calc(50% + 42px);top:18px; }
+@media(max-width:700px){
+ .table-board .table-monster .battle-foe-info {left:calc(50% + 18px);top:2px;width:22px;height:22px}
+ .table-board .table-boss-core .battle-foe-info {left:calc(50% + 31px);top:13px}
+}
+.battle-milestone:has(.battle-reward-panel){
+  width:min(820px,calc(100% - 24px));
+  max-height:min(82dvh,720px);
+  overflow-y:auto;
+  overflow-x:hidden;
+  scrollbar-width:thin;
+  padding:clamp(12px,2vw,24px);
+}
+.battle-reward-panel{display:grid;gap:11px;margin-top:12px;min-width:0}
+.battle-reward-current{color:#ffd48f;font:10px/1.7 var(--pixel);padding:9px 12px;border:1px solid #88704e;background:#29271f}
+.battle-reward-face-label{font-size:11px;color:#d2c8b0}
+.battle-reward-select{width:100%;min-width:0;border:1px solid #65757c;background:#111d25;color:#f4ead9;padding:9px;font-size:12px}
+.battle-reward-options{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}
+.battle-reward-card{display:flex;flex-direction:column;gap:7px;padding:12px;border:1px solid #856c4c;background:#18252c;min-width:0;text-align:left}
+.battle-reward-card strong{font:10px/1.65 var(--pixel);color:#f8d69e;overflow-wrap:anywhere}
+.battle-reward-card p{margin:0;color:#d3dfda;font-size:11px;line-height:1.5;flex:1;overflow-wrap:anywhere}
+.battle-reward-tier{font-size:10px;color:#94c4c8}
+.battle-reward-card .button{font-size:10px;width:100%;min-width:0;padding:10px 4px}
+.battle-reward-alternatives{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.battle-reward-alternatives .button{min-width:0;font-size:10px;white-space:normal;line-height:1.5;padding:10px 8px}
+.battle-reward-panel button:disabled{opacity:.45;cursor:not-allowed}
+.battle-inventory{margin-top:9px;padding:8px;background:#101b23;border:1px solid #43545b;display:grid;gap:6px;max-height:128px;overflow-y:auto;scrollbar-width:thin}
+.battle-inventory-item{display:flex;justify-content:space-between;align-items:center;gap:6px;padding:6px;background:#1a2a33;color:#dbd2c5;font-size:10px}
+.battle-artifact-name{overflow-wrap:anywhere;min-width:0}
+.battle-inventory-item button{background:#55412b;border:1px solid #cca36d;color:#f7dfbd;padding:6px;flex:none;cursor:pointer;font-size:10px}
+@media(max-width:700px){
+ .battle-milestone:has(.battle-reward-panel){max-height:85dvh}
+ .battle-reward-options,.battle-reward-alternatives{grid-template-columns:1fr}
+}
+
+/* 3.4.2: personal camp die and a deliberate two-step artifact face choice. */
+.battle-camp-results{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}
+.battle-camp-result{display:flex;justify-content:space-between;align-items:center;gap:10px;border:1px solid #546775;background:#13222c;padding:11px;color:#e5e9e2;font-size:11px}
+.battle-camp-result strong{color:#f3d5a7}
+.battle-camp-panel>.button{width:100%;margin-top:8px}
+.battle-reward-explainer{font-size:11px;color:#bac9c9;margin:0;line-height:1.55}
+.battle-reward-second-step{display:grid;gap:12px;padding:8px 0}
+.battle-reward-second-step h3{margin:0;font:11px/1.6 var(--pixel);color:#f7d6a2}
+.battle-reward-second-step>p{font-size:12px;margin:0;color:#e2e7dc}
+.battle-reward-face-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.battle-reward-face-tile{display:flex;flex-direction:column;gap:8px;align-items:center;justify-content:center;min-height:86px;background:#12222d;border:2px solid #556b76;color:#e3e7d9;padding:9px;cursor:pointer;text-align:center}
+.battle-reward-face-tile span{font-size:10px;color:#94afbb}
+.battle-reward-face-tile strong{font:9px/1.65 var(--pixel);overflow-wrap:anywhere}
+.battle-reward-face-tile.selected{border-color:#f4c077;background:#383324;box-shadow:inset 0 0 0 1px #8c754e}
+.battle-reward-face-tile:disabled{cursor:not-allowed;opacity:.5}
+.battle-reward-second-actions{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+.battle-reward-second-actions .button{min-width:0;white-space:normal;font-size:11px;padding:12px 7px}
+@media(max-width:700px){.battle-camp-results{grid-template-columns:1fr}.battle-reward-face-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.battle-reward-second-actions{grid-template-columns:1fr}}

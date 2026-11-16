@@ -4,14 +4,22 @@ import { BattleSession, turnDurations } from '../src/battle.js';
 import { RoomManager } from '../src/rooms.js';
 import { FOES } from '../src/foes.js';
 import { HERO_DICE, type HeroId } from '@samopalka/shared';
+import { legacyDiceForCombatFixtures, rollAllAtCamp } from './stage342.helpers.js';
 
 type TestHero = { id: string; heroId: HeroId };
 function make(heroes: TestHero[] = [{id:'a',heroId:'warrior'},{id:'b',heroId:'healer'}], rolls: number[] = [5,5], pick = () => 0) {
   let now = 1000;
   let dieIndex = 0;
   const session = new BattleSession(heroes, () => now, () => rolls[dieIndex++ % rolls.length]!, pick);
+  legacyDiceForCombatFixtures(session,heroes);
   const monster = (id: string, floor = session.snapshot().floor) => `monster:${floor}:${id}`;
   const entity = (id: string) => session.snapshot().combatants.find(c=>c.id===id);
+  const resolveEnemy = () => {
+    for(let i=0;i<60 && session.snapshot().phase==='enemy';i++){
+      now=(session.snapshot().deadlineAt??now)+1;session.tick(()=>true,id=>id);
+    }
+    if(session.snapshot().phase==='enemy')throw new Error('Не завершена последовательность существ.');
+  };
   const act = (id: string, target?: string) => {
     session.roll(id,id);
     session.choose(id,0,id);
@@ -19,9 +27,9 @@ function make(heroes: TestHero[] = [{id:'a',heroId:'warrior'},{id:'b',heroId:'he
       if (!target) throw Error('Тест: ожидалась цель');
       session.target(id,target,id);
     }
-    if (session.snapshot().phase === 'enemy') { now += 500; session.tick(()=>true,id=>id); }
+    if (session.snapshot().phase === 'enemy') resolveEnemy();
   };
-  return {session,entity,act,monster, advance(ms: number) { now+=ms; }, resolveEnemy() { now+=500; session.tick(()=>true,id=>id); }};
+  return {session,entity,act,monster, advance(ms: number) { now+=ms; }, resolveEnemy};
 }
 
 test('бросок двух кубиков, выбор грани и ответная атака монстра', () => {
@@ -145,6 +153,7 @@ test('после зачистки этажа открывается привал
   assert.equal(session.snapshot().phase,'rest');
   assert.equal(session.snapshot().floor,1);
   assert.throws(()=>session.roll('a','a'),/нельзя выполнять ход/);
+  rollAllAtCamp(session);while(session.snapshot().rewardDraft?.playerId)session.claimReward(session.snapshot().rewardDraft!.playerId!,'maxhp');
   session.continueFloor();
   assert.equal(session.snapshot().floor,2);
   assert.equal(session.snapshot().phase,'roll');
@@ -159,6 +168,7 @@ test('после шестого этажа игра заканчивается �
     session.pass(session.activePlayer()!, 'player');
     if(level<6) {
       assert.equal(session.snapshot().phase,'rest');
+      rollAllAtCamp(session);while(session.snapshot().rewardDraft?.playerId)session.claimReward(session.snapshot().rewardDraft!.playerId!,'maxhp');
       session.continueFloor();
     }
   }
@@ -238,6 +248,12 @@ test('только хост может запустить следующий э�
   manager.passTurn('h');
   assert.equal(manager.snapshot(code)?.game?.phase,'rest');
   assert.throws(()=>manager.nextFloor('g'),/хосту/);
+  manager.rollCamp('h');manager.rollCamp('g');
+  while(manager.snapshot(code)?.game?.rewardDraft?.playerId){
+    const current=manager.snapshot(code)!.game!.rewardDraft!.playerId!;
+    const participant=manager.snapshot(code)!.players.find(p=>p.id===current)!;
+    manager.claimReward(participant.isHost?'h':'g','maxhp');
+  }
   manager.nextFloor('h');
   assert.equal(manager.snapshot(code)?.game?.floor,2);
 });
@@ -264,15 +280,17 @@ test('чужой игрок не может отменить выбранную 
   assert.throws(()=>session.cancelChoice('a'),/Сейчас нельзя выполнять ход/);
 });
 
-test('между действием героя и ответной атакой монстра есть 500 мс ожидания', () => {
+test('между действием героя и ответной атакой монстра есть 2000 мс ожидания', () => {
   const {session,entity,monster,advance} = make();
   session.roll('a','a');session.choose('a',0,'a');session.target('a',monster('a'),'a');
   assert.equal(session.snapshot().phase,'enemy');
   assert.equal(entity('a')?.hp,11);
-  advance(499);session.tick(()=>true,id=>id);
+  advance(1999);session.tick(()=>true,id=>id);
   assert.equal(entity('a')?.hp,11);
   advance(1);session.tick(()=>true,id=>id);
   assert.equal(entity('a')?.hp,9);
+  assert.equal(session.snapshot().phase,'enemy'); // next hero waits a further 2 seconds
+  advance(2000);session.tick(()=>true,id=>id);
   assert.equal(session.snapshot().activePlayerId,'b');
   assert.ok(session.snapshot().events.some(e=>e.visual?.type==='strike' && e.visual.targetId==='a'));
 });
@@ -306,7 +324,7 @@ test('после перехода на следующий этаж набор м
   const oldIDs = session.snapshot().combatants.filter(c=>c.kind==='monster').map(c=>c.id);
   const state=(session as unknown as {combatants:Map<string,{kind:string;alive:boolean;hp:number}>}).combatants;
   for(const c of state.values())if(c.kind!=='hero'){c.alive=false;c.hp=0;}
-  session.pass('a','a');session.continueFloor();
+  session.pass('a','a');rollAllAtCamp(session);while(session.snapshot().rewardDraft?.playerId)session.claimReward(session.snapshot().rewardDraft!.playerId!,'maxhp');session.continueFloor();
   const next=session.snapshot().combatants.filter(c=>c.kind==='monster');
   assert.ok(next.every(c=>c.alive && c.id.includes('monster:2:')));
   assert.ok(next.every(c=>!oldIDs.includes(c.id)));

@@ -19,3 +19,8 @@ coverage/
 Thumbs.db
 .idea/
 .vscode/
+
+# Simulation outputs
+simulator-report.json
+reports/
+*.traces.json

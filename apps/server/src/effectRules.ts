@@ -13,6 +13,7 @@ export type FoeAction = {
   paralysis: boolean;
   sleep: boolean;
   decay: boolean;
+  growth: boolean;
   selfHeal: boolean;
   dying: boolean;
 };
@@ -29,7 +30,7 @@ export function printedFoeAction(def: FoeDefinition): FoeAction {
     amount: strike && Number.isInteger(amount) && amount > 0 ? amount : 0,
     allHeroes: has('все герои'), scatter: has('разброс'),
     poison: has('яд'), weakness: has('слабость'), pain: has('боль'),
-    paralysis: has('паралич'), sleep: has('сон'), decay: has('гниение'),
+    paralysis: has('паралич'), sleep: has('сон'), decay: has('гниение'), growth: has('рост'),
     selfHeal: has('самолечение'), dying: has('издыхание')
   };
 }
@@ -40,6 +41,19 @@ export function statusValue(entity: CombatantSnapshot, kind: StatusEffect['kind'
 export function addEffect(entity: CombatantSnapshot, kind: StatusEffect['kind'], amount: number, sourceId?:string) {
   if (amount <= 0) return;
   entity.effects ??= [];
+  // Poison and regeneration mutually cancel at application time. Preserve only
+  // the remainder, so clients never display both as simultaneously active.
+  if(kind==='poison'||kind==='regeneration'){
+    const opposite=kind==='poison'?'regeneration':'poison';
+    const existing=entity.effects.find(e=>e.kind===opposite);
+    if(existing){
+      const cancelled=Math.min(amount,existing.amount);
+      amount-=cancelled;
+      existing.amount-=cancelled;
+      if(existing.amount<=0)entity.effects=entity.effects.filter(e=>e!==existing);
+      if(amount===0)return;
+    }
+  }
   const previous = entity.effects.find(e => e.kind === kind);
   if (previous) previous.amount += amount;
   else entity.effects.push({kind,amount,...(sourceId?{sourceId}:{})});

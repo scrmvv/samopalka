@@ -36,12 +36,12 @@ export type JoinRoomData = { nickname: string; code: string; token: string };
 export type DiceFace = { kind: 'strike' | 'shield' | 'heal' | 'mana' | 'empty' | 'special'; value: number; label: string; note?: string };
 const face = (kind: DiceFace['kind'], value: number, label: string, note?: string): DiceFace => ({ kind, value, label, ...(note ? { note } : {}) });
 export const HERO_DICE: Record<HeroId, readonly DiceFace[]> = {
-  warrior: [face('empty',0,'Пусто'),face('empty',0,'Пусто'),face('heal',2,'Лечение 2'),face('shield',2,'Щит 2'),face('strike',2,'Удар 2'),face('strike',2,'Удар 2')],
-  berserker: [face('empty',0,'Пусто'),face('empty',0,'Пусто'),face('special',1,'СамоУворот 1'),face('strike',1,'Удар 1'),face('strike',2,'Удар 2'),face('strike',4,'Удар 4')],
-  knight: [face('empty',0,'Пусто'),face('special',1,'Самощит 1 + Насмешка'),face('special',2,'Самощит 2 + Насмешка'),face('shield',2,'Щит 2'),face('shield',3,'Щит 3'),face('strike',2,'Удар 2')],
-  healer: [face('empty',0,'Пусто'),face('mana',1,'Мана 1'),face('mana',2,'Мана 2'),face('heal',3,'Лечение 3'),face('heal',3,'Лечение 3'),face('strike',2,'Удар 2')],
-  adept: [face('empty',0,'Пусто'),face('empty',0,'Пусто'),face('mana',1,'Мана 1'),face('mana',2,'Мана 2'),face('mana',2,'Мана 2'),face('mana',3,'Мана 3')],
-  archer: [face('empty',0,'Пусто'),face('empty',0,'Пусто'),face('heal',2,'Лечение 2'),face('strike',2,'Удар 2 + Дальность'),face('strike',2,'Удар 2 + Дальность'),face('strike',3,'Удар 3 + Дальность')]
+  warrior: [face('heal',2,'Лечение 2'),face('shield',2,'Щит 2'),face('strike',2,'Удар 2'),face('strike',2,'Удар 2'),face('empty',0,'Пусто'),face('empty',0,'Пусто')],
+  berserker: [face('special',1,'СамоУворот 1'),face('strike',1,'Удар 1'),face('strike',2,'Удар 2'),face('strike',4,'Удар 4'),face('empty',0,'Пусто'),face('empty',0,'Пусто')],
+  knight: [face('special',1,'Самощит 1 + Насмешка'),face('special',2,'Самощит 2 + Насмешка'),face('shield',2,'Щит 2'),face('shield',3,'Щит 3'),face('strike',2,'Удар 2'),face('empty',0,'Пусто')],
+  healer: [face('mana',1,'Мана 1'),face('mana',2,'Мана 2'),face('heal',3,'Лечение 3'),face('heal',3,'Лечение 3'),face('strike',2,'Удар 2'),face('empty',0,'Пусто')],
+  adept: [face('mana',1,'Мана 1'),face('mana',2,'Мана 2'),face('mana',2,'Мана 2'),face('mana',3,'Мана 3'),face('empty',0,'Пусто'),face('empty',0,'Пусто')],
+  archer: [face('heal',2,'Лечение 2'),face('strike',2,'Удар 2 + Дальность'),face('strike',2,'Удар 2 + Дальность'),face('strike',3,'Удар 3 + Дальность'),face('empty',0,'Пусто'),face('empty',0,'Пусто')]
 };
 
 /** Public combat data. HP values for monsters and the boss are temporary test values in 3.1. */
@@ -63,6 +63,20 @@ export type StatusEffect = {
   amount: number;
   sourceId?: string;
 };
+export type ArtifactCard = {
+  id: string;
+  title: string;
+  description: string;
+  tier: number;
+  group: string;
+  kind: 'face' | 'hp' | 'maxhp' | 'consumable' | 'buffall' | 'doubleface';
+  face?: DiceFace;
+  amount?: number;
+};
+export type ArtifactItem = ArtifactCard & { instanceId: string; spent: boolean; faceIndex?: number };
+export type RewardDraft = { playerId: string | null; offers: ArtifactCard[]; completed: boolean; chosenIds: string[] };
+export type CampRollResult = { playerId: string; die: number; healed: number; hp: number; maxHp: number };
+export type CampRest = { pendingPlayerIds: string[]; results: CampRollResult[]; completed: boolean };
 export type PendingAction = { kind: DiceFace['kind']; value: number; label: string; faceIndex?: number };
 export type BattleVisual = { type: 'turn' | 'strike' | 'heal' | 'shield' | 'mana'; actorId?: string; targetId?: string };
 export type BattleEvent = { id: number; kind: 'system' | 'turn' | 'dice' | 'action' | 'timeout'; text: string; visual?: BattleVisual };
@@ -78,6 +92,11 @@ export type BattleSnapshot = {
   missedTurns: Record<string,number>;
   combatants: CombatantSnapshot[];
   diceFaces?: Record<string,DiceFace[]>;
+  /** Descriptions from the source monster catalogue. Available to every player. */
+  foeInfo?: Record<string,{description:string;floor:number;boss:boolean}>;
+  rewardDraft?: RewardDraft | null;
+  campRest?: CampRest | null;
+  inventories?: Record<string, ArtifactItem[]>;
   pendingAction: PendingAction | null;
   availableTargetIds: string[];
   result: null | { reason: 'six_floors' | 'last_survivor' | 'party_wiped'; winnerIds: string[] };

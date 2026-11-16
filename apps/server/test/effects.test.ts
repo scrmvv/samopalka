@@ -4,10 +4,13 @@ import { BattleSession } from '../src/battle.js';
 import { FOES, type FoeDefinition } from '../src/foes.js';
 import { printedFoeAction, addEffect, statusValue } from '../src/effectRules.js';
 import type { CombatantSnapshot, HeroId } from '@samopalka/shared';
+import { legacyDiceForCombatFixtures } from './stage342.helpers.js';
 
 function fixture(heroIds:HeroId[]=['warrior','healer'], rolls:number[]=[5,5]){
   let now=1000;let index=0;
-  const s=new BattleSession(heroIds.map((heroId,i)=>({id:`p${i}`,heroId})),()=>now,()=>rolls[index++%rolls.length]!,()=>0);
+  const players=heroIds.map((heroId,i)=>({id:`p${i}`,heroId}));
+  const s=new BattleSession(players,()=>now,()=>rolls[index++%rolls.length]!,()=>0);
+  legacyDiceForCombatFixtures(s,players);
   const intern=s as unknown as {
     actor(id:string):CombatantSnapshot|undefined;
     foeDefinitions:Map<string,FoeDefinition>;
@@ -72,7 +75,7 @@ test('Берсерк: СамоУворот 1 поглощает первый о�
   s.roll('p0','p0');s.choose('p0',0,'p0');
   assert.equal(s.snapshot().phase,'enemy');
   assert.equal(statusValue(hero(),'dodge'),1);
-  advance(500);s.tick(()=>true,id=>id);
+  advance(2000);s.tick(()=>true,id=>id);
   assert.equal(hero().hp,8);
   assert.equal(statusValue(hero(),'dodge'),0);
 });
@@ -134,10 +137,11 @@ test('Слабость уменьшает стороны героев и сни�
 test('Сон блокирует ход, пока герой не получит настоящий урон',()=>{
   const {intern,hero,advance,s}=fixture();
   addEffect(hero(1),'sleep',1);
-  s.pass('p0','p0');advance(500);s.tick(()=>true,id=>id);
+  s.pass('p0','p0');advance(2000);s.tick(()=>true,id=>id);
+  advance(2000);s.tick(()=>true,id=>id);
   assert.equal(s.activePlayer(),'p1');
   assert.equal(s.snapshot().phase,'enemy');
-  intern.harm(hero(1),1,'враг');
+  intern.harm(hero(1),1,'враг',{strikeWord:true});
   assert.equal(statusValue(hero(1),'sleep'),0);
 });
 
@@ -149,11 +153,12 @@ test('Паралич наносит боль при выборе следующ�
   assert.equal(statusValue(hero(),'paralysis'),0);
 });
 
-test('Гниение уменьшает использованную грань на один после каждого применения',()=>{
-  const {s,hero}=fixture(['warrior','healer'],[5,5]);
-  addEffect(hero(),'decay',1);
+test('Гниение уменьшает только использованную грань после применения',()=>{
+  const {s}=fixture(['warrior','healer'],[5,5]);
+  s.debugSetFace({playerId:'p0',index:4,word:'decay',value:2});
   s.roll('p0','p0');s.choose('p0',0,'p0');s.target('p0','monster:1:p0','p0');
   assert.equal(s.snapshot().diceFaces?.p0?.[4].value,1);
+  assert.equal(s.snapshot().diceFaces?.p0?.[5].value,2);
 });
 
 test('Мясник с Разбросом задевает обоих соседних героев',()=>{
@@ -208,14 +213,14 @@ test('Миазм наносит массовый удар с ядом и пог�
   assert.equal(miasm.alive,false);
 });
 
-test('яд действует в конце пропущенного из-за сна хода',()=>{
+test('яд действует в конце пропущенного из-за сна хода, но не будит',()=>{
   const {s,intern,hero}=fixture();
   const c=hero(0);c.hp=8;
   addEffect(c,'sleep',1);addEffect(c,'poison',1);
   intern.prepareTurn();
   assert.equal(s.snapshot().phase,'enemy');
   assert.equal(c.hp,7);
-  assert.equal(statusValue(c,'sleep'),0); // poison damage wakes the hero
+  assert.equal(statusValue(c,'sleep'),1); // poison cannot wake from sleep
 });
 
 test('Насмешка: сначала выдаёт Самощит, затем вражеский удар расходует щит, остаток повреждает героя',()=>{
@@ -228,9 +233,10 @@ test('Насмешка: сначала выдаёт Самощит, затем �
   assert.equal(hero().shield,1);
   assert.equal(hero().hp,12);
   assert.equal(monster(1).ownerId,'p0');
-  advance(500);s.tick(()=>true,id=>id);
+  advance(2000);s.tick(()=>true,id=>id);
   assert.equal(hero().shield,0);
-  assert.equal(hero().hp,7); // 2 hits × 3, shield blocks one point.
+  advance(2000);s.tick(()=>true,id=>id);
+  assert.equal(hero().hp,7); // 2 separate hits × 3, shield blocks one point.
   assert.ok(s.snapshot().events.some(e=>e.text.includes('Самощит +1')));
   assert.ok(s.snapshot().events.some(e=>e.text.includes('щит поглотил 1')));
 });

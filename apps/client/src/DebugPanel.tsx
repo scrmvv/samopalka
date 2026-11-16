@@ -12,7 +12,8 @@ type Props = {
 const WORDS = [
   {id:'strike',label:'Удар'}, {id:'shield',label:'Щит'}, {id:'heal',label:'Лечение'},
   {id:'mana',label:'Мана'}, {id:'empty',label:'Пусто'},
-  {id:'dodge',label:'СамоУворот'}, {id:'taunt',label:'Самощит + Насмешка'}
+  {id:'dodge',label:'СамоУворот'}, {id:'taunt',label:'Самощит + Насмешка'},
+  {id:'growth',label:'Удар + Рост (грань)'}, {id:'decay',label:'Удар + Гниение (грань)'}
 ];
 const STAT_FIELDS = [
   {id:'hp',label:'Здоровье (HP)'},{id:'maxHp',label:'Макс. здоровье'},
@@ -21,7 +22,7 @@ const STAT_FIELDS = [
 const EFFECTS = [
   {id:'poison',label:'Яд'}, {id:'weakness',label:'Слабость'}, {id:'stun',label:'Оглушение'},
   {id:'sleep',label:'Сон'}, {id:'paralysis',label:'Паралич'},
-  {id:'dodge',label:'Уворот'}, {id:'regeneration',label:'Регенерация'}, {id:'decay',label:'Гниение'}
+  {id:'dodge',label:'Уворот'}, {id:'regeneration',label:'Регенерация'}
 ];
 
 /** Local testing controls; every mutation is validated on the server for the room host. */
@@ -71,7 +72,7 @@ export function DebugPanel({room, playerId, busy, onAction, onClose}: Props) {
         <h2>ТЕСТОВАЯ ПАНЕЛЬ</h2>
         <button className="battle-icon-button" type="button" onClick={onClose} title="Закрыть"><X size={17}/></button>
       </div>
-      <p className="battle-debug-hint">Доступна только хосту при запуске сервера с DEBUG_TOOLS=1. Все изменения применяются на сервере и сразу видны игрокам. После новой партии настройки сбрасываются.</p>
+      <p className="battle-debug-hint">Доступна только хосту закрытой тестовой сборки (для отключения: DEBUG_TOOLS=0). Все изменения применяются на сервере и сразу видны игрокам. После новой партии настройки сбрасываются.</p>
       <div className="battle-debug-grid">
         <div className="battle-debug-section">
           <h3>ГРАНИ КУБИКА</h3>
@@ -114,7 +115,7 @@ export function DebugPanel({room, playerId, busy, onAction, onClose}: Props) {
             <button disabled={!canSubmit} onClick={()=>onAction('debug:status',{id:statusId,kind:statusKind,amount:Number(statusAmount),mode:'add'})}>Наложить</button>
             <button disabled={!canSubmit} onClick={()=>onAction('debug:status',{id:statusId,kind:statusKind,mode:'clear'})}>Снять</button>
           </div>
-          <div className="battle-debug-subnote">Яд, слабость, оглушение, сон, паралич, уворот, регенерация и гниение — уже реализованные состояния.</div>
+          <div className="battle-debug-subnote">Гниение и Рост — свойства конкретной грани, проверяйте их в разделе «Грани кубика». Паралич временно добавляет Боль ко всем граням.</div>
         </div>
         <div className="battle-debug-section">
           <h3>ПРОТИВНИК</h3>

@@ -257,6 +257,22 @@ export class RoomManager {
     return room.code;
   }
 
+  rollCamp(socketId:string){
+    const {room,player,game}=this.battleMember(socketId);
+    try {game.rollCamp(player.id);}catch(e){if(e instanceof BattleError)throw new RoomError(e.message);throw e;}
+    this.touch(room);return room.code;
+  }
+  claimReward(socketId:string,choice:unknown,faceIndex?:unknown){
+    const {room,player,game}=this.battleMember(socketId);
+    try {game.claimReward(player.id,choice,faceIndex);}catch(e){if(e instanceof BattleError)throw new RoomError(e.message);throw e;}
+    this.touch(room);return room.code;
+  }
+  useArtifact(socketId:string,instanceId:unknown){
+    const {room,player,game}=this.battleMember(socketId);
+    try {game.useArtifact(player.id,instanceId);}catch(e){if(e instanceof BattleError)throw new RoomError(e.message);throw e;}
+    this.touch(room);return room.code;
+  }
+
   nextFloor(socketId: string) {
     const {room, player, game} = this.battleMember(socketId);
     this.requireHost(room, player);

@@ -1,0 +1,5 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {"rootDir": ".", "noEmit": true},
+  "include": ["simulator/**/*.ts", "test/simulator.test.ts", "src/battle.ts", "src/foes.ts", "src/effectRules.ts"]
+}
