@@ -26,7 +26,10 @@ export type RoomSnapshot = {
   players: PlayerPublic[];
   updatedAt: number;
   game?: BattleSnapshot;
-  debug?: { foes: { id:string; name:string; floor:number; hp:number; boss:boolean }[] };
+  debug?: {
+    foes: { id:string; name:string; floor:number; hp:number; boss:boolean }[];
+    artifacts: { id:string; title:string; description:string; tier:number; group:string; kind:ArtifactCard['kind'] }[];
+  };
 };
 export type Ack<T = undefined> = { ok: true; data: T } | { ok: false; error: string };
 export type CreateRoomData = { nickname: string; name: string; maxPlayers: number; token: string };
@@ -93,7 +96,7 @@ export type BattleSnapshot = {
   combatants: CombatantSnapshot[];
   diceFaces?: Record<string,DiceFace[]>;
   /** Descriptions from the source monster catalogue. Available to every player. */
-  foeInfo?: Record<string,{description:string;floor:number;boss:boolean}>;
+  foeInfo?: Record<string,{description:string;floor:number;boss:boolean;currentAction?:string}>;
   rewardDraft?: RewardDraft | null;
   campRest?: CampRest | null;
   inventories?: Record<string, ArtifactItem[]>;

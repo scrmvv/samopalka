@@ -2,6 +2,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { HEROES, type HeroId, type PlayerPublic, type RoomSnapshot, type RoomStatus } from '@samopalka/shared';
 import { BattleSession, BattleError } from './battle.js';
 import { FOES } from './foes.js';
+import { ARTIFACTS } from './artifacts.js';
 
 const CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const RECONNECT_MS = 60_000;
@@ -93,7 +94,10 @@ export class RoomManager {
       code: r.code, name: r.name, maxPlayers: r.maxPlayers, status: r.status,
       campaign: 'Путь проклятых', updatedAt: r.updatedAt,
       ...(r.game ? { game: r.game.snapshot() } : {}),
-      ...(this.debugEnabled ? {debug: {foes: FOES.map(f=>({id:f.id,name:f.name,floor:f.floor,hp:f.hp,boss:f.boss}))}} : {}),
+      ...(this.debugEnabled ? {debug: {
+        foes: FOES.map(f=>({id:f.id,name:f.name,floor:f.floor,hp:f.hp,boss:f.boss})),
+        artifacts: ARTIFACTS.map(a=>({id:a.id,title:a.title,description:a.description,tier:a.tier,group:a.group,kind:a.kind}))
+      }} : {}),
       players: r.players.map((p): PlayerPublic => ({
         id: p.id, nickname: p.nickname, heroId: p.heroId,
         ready: p.ready, connected: p.socketId !== null, isHost: p.id === r.hostId
@@ -292,6 +296,7 @@ export class RoomManager {
         case 'debug:status': game.debugApplyStatus(payload);break;
         case 'debug:roll': game.debugSetRoll(payload);break;
         case 'debug:foe': game.debugReplaceFoe(payload);break;
+        case 'debug:artifact': game.debugGrantArtifact(payload);break;
         case 'debug:time': game.debugExtendTurn(payload);break;
         default:throw new RoomError('Неизвестная отладочная команда.');
       }

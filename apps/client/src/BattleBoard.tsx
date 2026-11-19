@@ -199,7 +199,7 @@ export function BattleBoard({room,playerId,online,busy,error,onAction,onExit,onC
               <button type="button" onClick={()=>canTarget(monster.id)?pickTarget(monster.id):setInspectedFoe(monster.id)} title={canTarget(monster.id)?'Выбрать цель':'Открыть описание монстра'} className={'table-monster-card token-interaction '+(canTarget(monster.id)?'can-target ':'')}>
                 <EnemySprite variant={monster.variant}/>
                 <strong>{monster.name}</strong>
-                <CombatStats entity={combatants.get(monster.id)}/><StatusBadges entity={combatants.get(monster.id)}/>{visualFor(monster.id).map(e=><span key={e.key} className={'battle-token-flash flash-'+e.type} aria-hidden="true"/>)}
+                <CombatStats entity={combatants.get(monster.id)}/>{game.foeInfo?.[monster.id]?.currentAction && <span className="battle-monster-face" title={game.foeInfo[monster.id]!.currentAction}>Сила {game.foeInfo[monster.id]!.currentAction!.split(',').at(-1)?.trim()}</span>}<StatusBadges entity={combatants.get(monster.id)}/>{visualFor(monster.id).map(e=><span key={e.key} className={'battle-token-flash flash-'+e.type} aria-hidden="true"/>)}
               </button>
               <button type="button" className="battle-foe-info" onClick={()=>setInspectedFoe(monster.id)} title={`Прочитать способности: ${monster.name}`} aria-label={`Способности монстра ${monster.name}`}><Info size={13}/></button>
             </div>;
@@ -321,6 +321,7 @@ export function BattleBoard({room,playerId,online,busy,error,onAction,onExit,onC
           <div className="battle-foe-card-head"><span>БЕСТИАРИЙ · ЭТАЖ {game.foeInfo?.[inspectedFoe]?.floor ?? game.floor}</span><button type="button" onClick={()=>setInspectedFoe(null)} title="Закрыть"><X size={17}/></button></div>
           <h2>{combatants.get(inspectedFoe)?.name}</h2>
           <p className="battle-foe-parameters">Здоровье: {combatants.get(inspectedFoe)?.hp}/{combatants.get(inspectedFoe)?.maxHp} · Щит: {combatants.get(inspectedFoe)?.shield}</p>
+          {game.foeInfo?.[inspectedFoe]?.currentAction && <p className="battle-foe-parameters">Текущая грань: {game.foeInfo[inspectedFoe]!.currentAction}</p>}
           <h3>СЛОВА И ОСОБЕННОСТИ</h3>
           <p className="battle-foe-description">{game.foeInfo?.[inspectedFoe]?.description ?? 'Описание отсутствует в каталоге.'}</p>
           <button type="button" className="button button-primary" onClick={()=>setInspectedFoe(null)}>Вернуться к бою</button>

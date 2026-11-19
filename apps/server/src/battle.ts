@@ -59,6 +59,7 @@ export class BattleSession {
   private faceDoubles = new Map<string,Set<number>>();
   private allFaceBonuses = new Map<string,number>();
   private inventories = new Map<string,ArtifactItem[]>();
+  private artifactSerial = 0;
   private rewardQueue: string[] = [];
   private rewardOffers: ArtifactCard[] = [];
   private rewardDeck: ArtifactCard[] = [];
@@ -226,7 +227,21 @@ export class BattleSession {
       events:[...this.events],missedTurns:Object.fromEntries(this.consecutiveMisses),
       combatants:[...this.combatants.values()].map(c=>({...c,effects:c.effects?.map(e=>({...e}))??[]})),
       diceFaces:Object.fromEntries(this.playerIds.filter(id=>this.heroes.has(id)).map(id=>[id,this.computedFaces(id)])),
-      foeInfo:Object.fromEntries([...this.foeDefinitions].map(([id,def])=>[id,{description:def.description,floor:def.floor,boss:def.boss}])),
+      foeInfo:Object.fromEntries([...this.foeDefinitions].map(([id,def])=>{
+        const action=printedFoeAction(def);
+        const change=this.foeFaceChanges.get(id)??0;
+        // The catalogue is immutable, but the printed face on an individual
+        // monster changes after every use of Growth/Decay. Publish its CURRENT
+        // value so the bestiary never continues to show the original "5".
+        const currentValue=Math.max(0,action.amount+change);
+        const currentAction=(action.decay||action.growth)
+          ? `Удар, ${action.decay?'Гниение':'Рост'}, ${currentValue}`
+          : undefined;
+        const description=currentAction
+          ? def.description.replace(/^\s*"[^"]+"/,`"${currentAction}"`)
+          : def.description;
+        return [id,{description,floor:def.floor,boss:def.boss,...(currentAction?{currentAction}:{})}];
+      })),
       rewardDraft:this.phase==='rest'&&this.campPending.size===0?this.rewardDraft():null,
       campRest:this.phase==='rest'?{
         pendingPlayerIds:this.playerIds.filter(id=>this.campPending.has(id)),
@@ -314,26 +329,7 @@ export class BattleSession {
       const card=this.rewardOffers[index]!;
       const requiresFace=card.kind==='face'||card.kind==='doubleface';
       if(requiresFace&&!validIndex)throw new BattleError('Выберите грань кубика для артефакта.');
-      const item:ArtifactItem={...card,instanceId:`${this.floor}:${playerId}:${card.id}`,spent:false,...(requiresFace?{faceIndex:Number(faceIndex)}:{})};
-      const owned=this.inventories.get(playerId)??[];
-      owned.push(item);this.inventories.set(playerId,owned);
-      if(card.kind==='face'){
-        const idx=Number(faceIndex);
-        const heroId=this.heroes.get(playerId)!;
-        const faces=[...(this.artifactFaces.get(playerId)??HERO_DICE[heroId])];
-        faces[idx]={...card.face!};this.artifactFaces.set(playerId,faces);
-        // The replacement face starts with its new value; old decay/growth is local to previous face.
-        this.decayedFaces.get(playerId)?.delete(idx);this.grownFaces.get(playerId)?.delete(idx);
-      }else if(card.kind==='hp'){
-        hero.hp=Math.min(hero.maxHp,hero.hp+(card.amount??0));
-      }else if(card.kind==='maxhp'){
-        hero.maxHp=Math.min(500,hero.maxHp+(card.amount??0));
-      }else if(card.kind==='buffall'){
-        this.allFaceBonuses.set(playerId,(this.allFaceBonuses.get(playerId)??0)+(card.amount??1));
-      }else if(card.kind==='doubleface'){
-        const index=Number(faceIndex),doubled=this.faceDoubles.get(playerId)??new Set<number>();
-        doubled.add(index);this.faceDoubles.set(playerId,doubled);
-      }
+      this.applyArtifact(playerId,card,faceIndex);
       this.rewardOffers.splice(index,1);
       this.log(`${hero.name} получает артефакт «${card.title}»${requiresFace?` для грани ${Number(faceIndex)+1}`:''}.`, 'action');
     }
@@ -342,6 +338,49 @@ export class BattleSession {
     if(this.rewardQueue.length){this.refillOffers();this.deadlineAt=this.now()+this.rewardDurationMs;}
     else {this.deadlineAt=null;this.log('Все участники получили награды. Хост может продолжить поход.','system');}
   }
+  /** Shared effect path for a normal reward and a host-issued test artifact. */
+  private applyArtifact(playerId:string,card:ArtifactCard,faceIndex?:unknown){
+    const hero=this.actor(playerId);
+    if(!hero||hero.kind!=='hero')throw new BattleError('Герой не найден.');
+    const requiresFace=card.kind==='face'||card.kind==='doubleface';
+    const validIndex=Number.isInteger(faceIndex)&&Number(faceIndex)>=0&&Number(faceIndex)<6;
+    if(requiresFace&&!validIndex)throw new BattleError('Выберите грань кубика для артефакта (1–6).');
+    if(card.kind==='face'&&!card.face)throw new BattleError('Для этого артефакта не задана грань.');
+    const idx=Number(faceIndex);
+    const item:ArtifactItem={...card,instanceId:`${this.floor}:${playerId}:${card.id}:${++this.artifactSerial}`,spent:false,...(requiresFace?{faceIndex:idx}:{})};
+    const owned=this.inventories.get(playerId)??[];
+    owned.push(item);this.inventories.set(playerId,owned);
+    if(card.kind==='face'){
+      const faces=[...(this.artifactFaces.get(playerId)??HERO_DICE[this.heroes.get(playerId)!])];
+      faces[idx]={...card.face!};this.artifactFaces.set(playerId,faces);
+      this.decayedFaces.get(playerId)?.delete(idx);this.grownFaces.get(playerId)?.delete(idx);
+    }else if(card.kind==='hp'){
+      hero.hp=Math.min(hero.maxHp,hero.hp+(card.amount??0));
+    }else if(card.kind==='maxhp'){
+      hero.maxHp=Math.min(500,hero.maxHp+(card.amount??0));
+    }else if(card.kind==='buffall'){
+      this.allFaceBonuses.set(playerId,(this.allFaceBonuses.get(playerId)??0)+(card.amount??1));
+    }else if(card.kind==='doubleface'){
+      const doubled=this.faceDoubles.get(playerId)??new Set<number>();
+      doubled.add(idx);this.faceDoubles.set(playerId,doubled);
+    }
+    return item;
+  }
+
+  /** Host-only test helper. Does not alter the live reward pool, queue or timer. */
+  debugGrantArtifact(input:unknown){
+    if(this.phase==='finished'||this.phase==='paused')throw new BattleError('Артефакты нельзя выдавать после завершения игры.');
+    if(!input||typeof input!=='object')throw new BattleError('Неверные параметры артефакта.');
+    const data=input as Record<string,unknown>;
+    if(typeof data.playerId!=='string'||!this.heroes.has(data.playerId))throw new BattleError('Выберите героя.');
+    if(typeof data.artifactId!=='string')throw new BattleError('Выберите артефакт.');
+    const card=ARTIFACTS.find(a=>a.id===data.artifactId);
+    if(!card)throw new BattleError('Артефакт не найден в поддерживаемом каталоге.');
+    const item=this.applyArtifact(data.playerId,card,data.faceIndex);
+    const hero=this.actor(data.playerId)!;
+    this.log(`[ТЕСТ] ${hero.name} получает «${item.title}»${item.faceIndex===undefined?'':` для грани ${item.faceIndex+1}`}.`,'system');
+  }
+
   useArtifact(playerId:string,instanceId:unknown){
     this.assertActive(playerId);
     if(typeof instanceId!=='string')throw new BattleError('Неверный артефакт.');
@@ -720,9 +759,10 @@ export class BattleSession {
     }
     if(words.decay||words.growth){
       const delta=words.growth?1:-1;
+      const before=Math.max(0,words.amount+(this.foeFaceChanges.get(enemy.id)??0));
       const next=Math.max(-words.amount, (this.foeFaceChanges.get(enemy.id)??0)+delta);
       this.foeFaceChanges.set(enemy.id,next);
-      this.log(`${enemy.name}: ${words.growth?'Рост':'Гниение'} изменяет собственную грань после действия (${damage} → ${Math.max(0,words.amount+next)}).`,'system');
+      this.log(`${enemy.name}: ${words.growth?'Рост':'Гниение'} изменяет собственную грань после действия (${before} → ${Math.max(0,words.amount+next)}).`,'system');
     }
     if(words.selfHeal)this.heal(enemy,faceValue,enemy.name,enemy.id);
     if(words.pain && enemy.alive)this.harm(enemy,faceValue,`${enemy.name} · Боль`,{sourceId:enemy.id});

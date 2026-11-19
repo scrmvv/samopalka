@@ -43,6 +43,11 @@ export function DebugPanel({room, playerId, busy, onAction, onClose}: Props) {
   const [statusAmount,setStatusAmount]=useState('1');
   const [foeId,setFoeId]=useState('boss');
   const [foeDefinition,setFoeDefinition]=useState('');
+  const [artifactHeroId,setArtifactHeroId]=useState(playerId);
+  const [artifactTier,setArtifactTier]=useState('all');
+  const [artifactGroup,setArtifactGroup]=useState('all');
+  const [artifactId,setArtifactId]=useState('');
+  const [artifactSide,setArtifactSide]=useState('0');
   const [rollFirst,setRollFirst]=useState('1');
   const [rollSecond,setRollSecond]=useState('6');
   const hero=heroes.find(x=>x.id===heroId)??heroes[0];
@@ -51,6 +56,15 @@ export function DebugPanel({room, playerId, busy, onAction, onClose}: Props) {
   const foeOptions=useMemo(()=>room.debug?.foes.filter(x=>x.boss===(foe?.kind==='boss'))??[],[room.debug,foe?.kind]);
   const canSubmit=!busy&&game.phase!=='finished'&&game.phase!=='rest'&&game.phase!=='paused';
   const statEntity=entities.find(e=>e.id===statId);
+  const artifactHero=heroes.find(h=>h.id===artifactHeroId)??heroes[0];
+  const artifactCatalog=room.debug?.artifacts??[];
+  const artifactGroups=[...new Set(artifactCatalog.map(a=>a.group))].sort((a,b)=>a.localeCompare(b,'ru'));
+  const artifactOptions=artifactCatalog.filter(a=>(artifactTier==='all'||String(a.tier)===artifactTier)&&(artifactGroup==='all'||a.group===artifactGroup))
+    .sort((a,b)=>a.title.localeCompare(b.title,'ru'));
+  const selectedArtifact=artifactCatalog.find(a=>a.id===artifactId);
+  const needsArtifactSide=selectedArtifact?.kind==='face'||selectedArtifact?.kind==='doubleface';
+  const artifactFaces=artifactHero?(game.diceFaces?.[artifactHero.id]??[]):[];
+  const canGrant=!busy&&game.phase!=='finished'&&game.phase!=='paused';
 
   useEffect(()=>{
     const handler=(event:KeyboardEvent)=>{if(event.key==='Escape')onClose();};
@@ -128,6 +142,40 @@ export function DebugPanel({room, playerId, busy, onAction, onClose}: Props) {
           </select>
           <button className="battle-debug-submit" disabled={!canSubmit||!foe||!foeDefinition} onClick={()=>onAction('debug:foe',{id:foeId,foeId:foeDefinition})}>Подменить противника</button>
           <div className="battle-debug-subnote">Можно тестировать монстров и боссов из других этажей. Замена восстанавливает HP выбранного противника.</div>
+        </div>
+        <div className="battle-debug-section">
+          <h3>ВЫДАТЬ АРТЕФАКТ</h3>
+          <label htmlFor="db-artifact-hero">Кому выдать</label>
+          <select id="db-artifact-hero" value={artifactHero?.id??''} onChange={e=>setArtifactHeroId(e.target.value)}>
+            {heroes.map(h=><option key={h.id} value={h.id}>{room.players.find(p=>p.id===h.id)?.nickname??h.name} — {h.name}</option>)}
+          </select>
+          <div className="battle-debug-row" style={{marginTop:9}}>
+            <div><label htmlFor="db-artifact-tier">Уровень</label>
+              <select id="db-artifact-tier" value={artifactTier} onChange={e=>{setArtifactTier(e.target.value);setArtifactId('');}}>
+                <option value="all">Все</option>{[1,2,3,4,5].map(n=><option key={n} value={n}>{n}</option>)}
+              </select>
+            </div>
+            <div><label htmlFor="db-artifact-group">Класс</label>
+              <select id="db-artifact-group" value={artifactGroup} onChange={e=>{setArtifactGroup(e.target.value);setArtifactId('');}}>
+                <option value="all">Все</option>{artifactGroups.map(g=><option key={g} value={g}>{g}</option>)}
+              </select>
+            </div>
+          </div>
+          <label htmlFor="db-artifact-name" style={{marginTop:9}}>Артефакт ({artifactOptions.length})</label>
+          <select id="db-artifact-name" value={artifactId} onChange={e=>setArtifactId(e.target.value)}>
+            <option value="">Выберите...</option>
+            {artifactOptions.map(a=><option key={a.id} value={a.id}>{a.title} · уровень {a.tier}</option>)}
+          </select>
+          {selectedArtifact && <div className="battle-debug-subnote">{selectedArtifact.description}</div>}
+          {needsArtifactSide && <>
+            <label htmlFor="db-artifact-side" style={{marginTop:9}}>Грань для замены или улучшения</label>
+            <select id="db-artifact-side" value={artifactSide} onChange={e=>setArtifactSide(e.target.value)}>
+              {artifactFaces.map((face,i)=><option key={i} value={i}>Сторона {i+1}: {face.label}</option>)}
+            </select>
+          </>}
+          <button className="battle-debug-submit" disabled={!canGrant||!artifactHero||!selectedArtifact||needsArtifactSide&&artifactFaces.length!==6}
+            onClick={()=>onAction('debug:artifact',{playerId:artifactHero?.id,artifactId,...(needsArtifactSide?{faceIndex:Number(artifactSide)}:{})})}>Выдать артефакт</button>
+          <div className="battle-debug-subnote">Предмет сразу выдаётся выбранному герою, в том числе с другого этажа. Грани изменяются через обычную игровую механику. Выдача не тратит награды, не сдвигает очередь и не сбрасывает таймер.</div>
         </div>
         <div className="battle-debug-section">
           <h3>КОНТРОЛЬ БРОСКА</h3>
