@@ -7,6 +7,8 @@ import { HeroSprite } from './HeroSprite';
 import { DebugPanel } from './DebugPanel';
 import { radialPosition, PLAYER_RING_RADIUS, visibleMonsters, monsterGridPositions } from './boardLayout';
 
+type TargetSetup = {targetId:string;scatterIds:string[];cleanseSelections:Record<string,Record<string,number>>};
+const CLEANSEABLE=new Set<StatusEffect['kind']>(['poison','weakness','sleep','paralysis','stun','decay']);
 type Props = {
   room: RoomSnapshot;
   playerId: string;
@@ -45,6 +47,7 @@ function CombatStats({ entity }:{ entity:CombatantSnapshot | undefined }) {
     {entity.kind==='hero' && <span className="combat-mana">✧ {entity.mana}/{entity.maxMana}</span>}
   </span>;
 }
+const BINARY_EFFECTS=new Set<StatusEffect['kind']>(['stun','sleep','paralysis','petrified']);
 const EFFECT_INFO: Record<StatusEffect['kind'],{symbol:string;label:string}> = {
   poison:{symbol:'☠',label:'Яд'}, weakness:{symbol:'↓',label:'Слабость'},
   stun:{symbol:'✦',label:'Оглушение'}, sleep:{symbol:'☾',label:'Сон'},
@@ -53,13 +56,15 @@ const EFFECT_INFO: Record<StatusEffect['kind'],{symbol:string;label:string}> = {
   petrified:{symbol:'◇',label:'Окаменение'}
 };
 function StatusBadges({entity}:{entity:CombatantSnapshot|undefined}){
-  const effects=(entity?.effects??[]).filter(e=>e.amount>0);
+  // Petrification must remain visible even if the hero has three or more statuses.
+  const effects=(entity?.effects??[]).filter(e=>e.amount>0)
+    .sort((a,b)=>Number(b.kind==='petrified')-Number(a.kind==='petrified'));
   if(!effects.length)return null;
   return <span className="combat-effect-pills" aria-label="Активные эффекты">
     {effects.slice(0,3).map((effect,i)=>
       <span key={`${effect.kind}-${i}`} className={'combat-effect-pill status-'+effect.kind}
-        title={`${EFFECT_INFO[effect.kind].label}: ${effect.amount}`}>
-        {EFFECT_INFO[effect.kind].symbol}{effect.amount}
+        title={`${EFFECT_INFO[effect.kind].label}${BINARY_EFFECTS.has(effect.kind)?'':`: ${effect.amount}`}`}>
+        {EFFECT_INFO[effect.kind].symbol}{BINARY_EFFECTS.has(effect.kind)?'':effect.amount}
       </span>)}
     {effects.length>3 && <span className="combat-effect-pill" title={effects.slice(3).map(e=>EFFECT_INFO[e.kind].label).join(', ')}>+{effects.length-3}</span>}
   </span>;
@@ -78,6 +83,8 @@ export function BattleBoard({room,playerId,online,busy,error,onAction,onExit,onC
   const [inspectedFoe,setInspectedFoe] = useState<string|null>(null);
   const [rewardFaceIndex,setRewardFaceIndex] = useState<number|null>(null);
   const [selectedReward,setSelectedReward] = useState<string|null>(null);
+  const [targetSetup,setTargetSetup] = useState<TargetSetup|null>(null);
+  const [pendingSpell,setPendingSpell] = useState<{id:string;free:boolean}|null>(null);
   const boardRef = useRef<HTMLDivElement>(null);
   const [boardSize,setBoardSize] = useState({width:1050,height:700});
   useEffect(()=>{
@@ -133,9 +140,11 @@ export function BattleBoard({room,playerId,online,busy,error,onAction,onExit,onC
   const mineHero = HEROES.find(h=>h.id===mine?.heroId);
   const active = room.players.find(p=>p.id===game.activePlayerId);
   const myTurn = Boolean(mine && game.activePlayerId===mine.id && online);
-  const canAct = myTurn && !busy && left>0 && ['roll','choose','target'].includes(game.phase);
+  const canAct = myTurn && !busy && left>0 && ['roll','choose','target','spell'].includes(game.phase);
   const faces = mine?.heroId ? (game.diceFaces?.[playerId] ?? HERO_DICE[mine.heroId]) : [];
   const myArtifacts = game.inventories?.[playerId] ?? [];
+  const mySpells = game.spells?.[playerId] ?? [];
+  const freeCastReady = game.spellFree?.[playerId]===true;
   const reward = game.rewardDraft;
   const rewardActor = room.players.find(p=>p.id===reward?.playerId);
   useEffect(()=>{setSelectedReward(null);setRewardFaceIndex(null);},[reward?.playerId,game.floor]);
@@ -144,19 +153,76 @@ export function BattleBoard({room,playerId,online,busy,error,onAction,onExit,onC
   const mayChooseReward = game.phase==='rest' && reward?.playerId===playerId && online && !busy;
   const activeFaces = active?.heroId ? (game.diceFaces?.[active.id] ?? HERO_DICE[active.heroId]) : [];
   const title = game.phase==='enemy' ? 'ХОД МОНСТРОВ' : game.phase==='paused' ? 'ИГРА ПРИОСТАНОВЛЕНА' : game.phase==='rest' ? (camp?.completed ? 'ПРИВАЛ · НАГРАДЫ' : 'ПРИВАЛ · БРОСОК') : game.phase==='finished' ? 'ПАРТИЯ ОКОНЧЕНА' : myTurn ? 'ВАШ ХОД' : `ХОДИТ: ${active?.nickname ?? 'ИГРОК'}`;
-  const awaiting = !online ? 'Соединение прервано. Возвращаемся в игру…' : game.phase==='paused' ? 'В комнате не осталось участников.' : game.phase==='enemy' ? 'Монстры готовятся ответить…' : game.phase==='rest' ? (camp?.completed ? 'Привал: герои выбирают артефакты и улучшения кубиков.' : 'Привал: каждый игрок бросает кубик для восстановления HP.') : game.phase==='finished' ? 'Результат партии отображается на поле.' : myTurn ? game.phase==='roll' ? 'Бросьте два кубика.' : game.phase==='choose' ? 'Выберите одну из двух граней.' : 'Выберите подсвеченную цель на поле.' : 'Ожидайте действия другого игрока.';
+  const awaiting = !online ? 'Соединение прервано. Возвращаемся в игру…' : game.phase==='paused' ? 'В комнате не осталось участников.' : game.phase==='enemy' ? 'Монстры готовятся ответить…' : game.phase==='rest' ? (camp?.completed ? 'Привал: герои выбирают артефакты и улучшения кубиков.' : 'Привал: каждый игрок бросает кубик для восстановления HP.') : game.phase==='finished' ? 'Результат партии отображается на поле.' : myTurn ? game.phase==='roll' ? 'Бросьте два кубика.' : game.phase==='choose' ? 'Выберите одну из двух граней.' : game.phase==='spell' ? 'Можно применять заклинания или завершить ход.' : 'Выберите подсвеченную цель на поле.' : 'Ожидайте действия другого игрока.';
   const rolls = useMemo(()=>game.rolls?.map((n,i)=>({n,index:i,face: activeFaces[n-1]})) ?? [],[game.rolls,activeFaces]);
   // Dead monsters remain in the server's history but must not occupy table space.
   // Keep the original sprite index so survivors do not change appearance after kills.
   const allMonsters = game.combatants.filter(c => c.kind === 'monster');
   const monsters = visibleMonsters(allMonsters).map(c => ({
     id:c.id, ownerId:c.ownerId, ownerNickname:room.players.find(p=>p.id===c.ownerId)?.nickname ?? 'герой',
-    variant: MONSTER_VARIANTS[allMonsters.indexOf(c) % MONSTER_VARIANTS.length], name:c.name
+    variant: MONSTER_VARIANTS[allMonsters.indexOf(c) % MONSTER_VARIANTS.length], name:c.name,
+    behind:Boolean(game.foeInfo?.[c.id]?.description.includes('Позади:'))
   }));
   const monsterPositions = monsterGridPositions(monsters, room.players.map(p => p.id), boardSize);
   const combatants = useMemo(() => new Map(game.combatants.map(c => [c.id, c])), [game.combatants]);
-  const canTarget = (id: string) => canAct && game.phase==='target' && game.availableTargetIds.includes(id);
-  const pickTarget = (id: string) => { if (canTarget(id)) onAction('game:target', id); };
+  const selectedSpell=mySpells.find(choice=>choice.id===pendingSpell?.id);
+  const canTarget = (id: string) => canAct && (pendingSpell ? !!selectedSpell?.available && selectedSpell.targets.includes(id) : game.phase==='target' && game.availableTargetIds.includes(id));
+  const scatter=Boolean(game.pendingAction?.label.toLocaleLowerCase('ru-RU').includes('разброс'));
+  const cleansing=Boolean(game.pendingAction?.label.toLocaleLowerCase('ru-RU').includes('очищение'));
+  const candidateIds=(id:string)=>game.scatterCandidates?.[id]??[];
+  const affectedIds=targetSetup?[targetSetup.targetId,...targetSetup.scatterIds]:[];
+  const cleanseable=(id:string)=>(combatants.get(id)?.effects??[]).filter(e=>CLEANSEABLE.has(e.kind)&&e.amount>0);
+  const cleanseNeed=(id:string)=>Math.min(game.pendingAction?.value??0,cleanseable(id).reduce((sum,e)=>sum+e.amount,0));
+  const cleanseSpent=(id:string)=>Object.values(targetSetup?.cleanseSelections[id]??{}).reduce((a,b)=>a+b,0);
+  const scatterRequired=targetSetup&&scatter?Math.min(2,candidateIds(targetSetup.targetId).length):0;
+  const readyToSubmit=Boolean(targetSetup&&targetSetup.scatterIds.length===scatterRequired&&affectedIds.every(id=>!cleansing||cleanseSpent(id)===cleanseNeed(id)));
+  useEffect(()=>setTargetSetup(null),[game.phase,game.activePlayerId,game.pendingAction?.faceIndex]);
+  useEffect(()=>setPendingSpell(null),[game.activePlayerId,game.phase]);
+  const startSpell=(spellId:string,free:boolean)=>{
+    if(!canAct)return;
+    const choice=mySpells.find(s=>s.id===spellId);
+    if(!choice?.available)return;
+    // A self spell and a mass spell do not need a target click.
+    if(choice.targets.length===0 || (choice.targets.length===1&&choice.targets[0]===playerId)){
+      onAction('game:cast-spell',{spellId,free,...(choice.targets.length===1?{targetId:playerId}:{})});
+      setPendingSpell(null);
+      return;
+    }
+    setPendingSpell({id:spellId,free});
+  };
+  const pickTarget = (id: string) => {
+    if(!canTarget(id))return;
+    if(pendingSpell){
+      onAction('game:cast-spell',{spellId:pendingSpell.id,targetId:id,free:pendingSpell.free});
+      setPendingSpell(null);
+      return;
+    }
+    if(!scatter&&!cleansing){onAction('game:target', id);return;}
+    const needCleanse=cleanseable(id).length>0;
+    if(!candidateIds(id).length&&!needCleanse){
+      onAction('game:target',{targetId:id,...(scatter?{scatterIds:[]}:{})});return;
+    }
+    setTargetSetup({targetId:id,scatterIds:[],cleanseSelections:{}});
+  };
+  const toggleScatter=(id:string)=>setTargetSetup(old=>{
+    if(!old)return old;
+    const already=old.scatterIds.includes(id);
+    const scatterIds=already?old.scatterIds.filter(x=>x!==id):old.scatterIds.length<Math.min(2,candidateIds(old.targetId).length)?[...old.scatterIds,id]:old.scatterIds;
+    const clean={...old.cleanseSelections};if(already)delete clean[id];
+    return {...old,scatterIds,cleanseSelections:clean};
+  });
+  const allocate=(id:string,kind:string,delta:number)=>setTargetSetup(old=>{
+    if(!old)return old;
+    const count=old.cleanseSelections[id]?.[kind]??0;
+    const maximum=cleanseable(id).find(e=>e.kind===kind)?.amount??0;
+    if(count+delta<0||count+delta>maximum||(delta>0&&Object.values(old.cleanseSelections[id]??{}).reduce((a,b)=>a+b,0)>=cleanseNeed(id)))return old;
+    return {...old,cleanseSelections:{...old.cleanseSelections,[id]:{...old.cleanseSelections[id],[kind]:count+delta}}};
+  });
+  const submitTargets=()=>{
+    if(!targetSetup||!readyToSubmit)return;
+    onAction('game:target',{targetId:targetSetup.targetId,...(scatter?{scatterIds:targetSetup.scatterIds}:{}),...(cleansing?{cleanseSelections:targetSetup.cleanseSelections}:{})});
+    setTargetSetup(null);
+  };
 
   return <main className="battle-shell battle-circular-shell">
     <div className="battle-topline">
@@ -195,11 +261,11 @@ export function BattleBoard({room,playerId,online,busy,error,onAction,onExit,onC
             // click-safe position rather than overlapping their sprites.
             const crowded = monsters.length > room.players.length || monsters.some((other,i)=>i!==index && other.ownerId===monster.ownerId);
             const ownerActive = monster.ownerId === game.activePlayerId;
-            return <div key={monster.id} title={`${monster.name} — напротив ${monster.ownerNickname}`} className={'table-monster lane-'+(index%6)+' '+(ownerActive?'active':'')+(crowded?' crowded':'')} style={monsterPositions[index]}>
+            return <div key={monster.id} title={`${monster.name} — напротив ${monster.ownerNickname}`} className={'table-monster lane-'+(index%6)+' '+(ownerActive?'active':'')+(crowded?' crowded':'')+(monster.behind?' behind':'')} style={monsterPositions[index]}>
               <button type="button" onClick={()=>canTarget(monster.id)?pickTarget(monster.id):setInspectedFoe(monster.id)} title={canTarget(monster.id)?'Выбрать цель':'Открыть описание монстра'} className={'table-monster-card token-interaction '+(canTarget(monster.id)?'can-target ':'')}>
                 <EnemySprite variant={monster.variant}/>
                 <strong>{monster.name}</strong>
-                <CombatStats entity={combatants.get(monster.id)}/>{game.foeInfo?.[monster.id]?.currentAction && <span className="battle-monster-face" title={game.foeInfo[monster.id]!.currentAction}>Сила {game.foeInfo[monster.id]!.currentAction!.split(',').at(-1)?.trim()}</span>}<StatusBadges entity={combatants.get(monster.id)}/>{visualFor(monster.id).map(e=><span key={e.key} className={'battle-token-flash flash-'+e.type} aria-hidden="true"/>)}
+                <CombatStats entity={combatants.get(monster.id)}/>{game.foeInfo?.[monster.id]?.currentAction && <span className="battle-monster-face" title={game.foeInfo[monster.id]!.currentAction}>⚔ {game.foeInfo[monster.id]!.currentAction!.split(',').at(-1)?.trim()}</span>}<StatusBadges entity={combatants.get(monster.id)}/>{visualFor(monster.id).map(e=><span key={e.key} className={'battle-token-flash flash-'+e.type} aria-hidden="true"/>)}
               </button>
               <button type="button" className="battle-foe-info" onClick={()=>setInspectedFoe(monster.id)} title={`Прочитать способности: ${monster.name}`} aria-label={`Способности монстра ${monster.name}`}><Info size={13}/></button>
             </div>;
@@ -281,15 +347,36 @@ export function BattleBoard({room,playerId,online,busy,error,onAction,onExit,onC
             <h2><Dice5 size={16}/> КУБИК И АРТЕФАКТЫ</h2>
             <span>{mineHero?.name ?? 'Герой'}</span>
           </div>
-          {game.phase === 'target' && <div className="battle-target-hint" role="status">
+          {targetSetup && myTurn && game.phase==='target' && <div className="battle-target-setup panel" role="dialog" aria-label="Настроить действие">
+            <h3>Подтверждение действия</h3>
+            <p>Основная цель: <strong>{combatants.get(targetSetup.targetId)?.name}</strong></p>
+            {scatter && <div className="battle-target-options"><strong>Разброс: выберите {scatterRequired} соседних существ</strong>
+              {candidateIds(targetSetup.targetId).length===0?<small>Соседей нет — действует только на основную цель.</small>:candidateIds(targetSetup.targetId).map(id=><button type="button" key={id} className={targetSetup.scatterIds.includes(id)?'chosen':''} onClick={()=>toggleScatter(id)}>{combatants.get(id)?.name??id} {targetSetup.scatterIds.includes(id)?'✓':''}</button>)}
+            </div>}
+            {cleansing && affectedIds.map(id=><div className="battle-target-options" key={id}>
+              <strong>Очищение: {combatants.get(id)?.name} — распределить {cleanseNeed(id)} ед. ({cleanseSpent(id)}/{cleanseNeed(id)})</strong>
+              {cleanseable(id).length===0?<small>Негативных эффектов нет.</small>:cleanseable(id).map(effect=><div className="battle-cleanse-row" key={effect.kind}>
+                <span>{EFFECT_INFO[effect.kind].label}: {effect.amount}</span>
+                <button type="button" disabled={(targetSetup.cleanseSelections[id]?.[effect.kind]??0)===0} onClick={()=>allocate(id,effect.kind,-1)}>−</button>
+                <b>{targetSetup.cleanseSelections[id]?.[effect.kind]??0}</b>
+                <button type="button" disabled={cleanseSpent(id)>=cleanseNeed(id)||(targetSetup.cleanseSelections[id]?.[effect.kind]??0)>=effect.amount} onClick={()=>allocate(id,effect.kind,1)}>+</button>
+              </div>)}
+            </div>)}
+            <div className="battle-target-confirm"><button type="button" onClick={()=>setTargetSetup(null)}>Назад</button><button type="button" disabled={!readyToSubmit||!canAct} onClick={submitTargets}>Применить действие</button></div>
+          </div>}
+          {pendingSpell && <div className="battle-target-hint" role="status">
+            <span>Выберите подсвеченную цель для «{selectedSpell?.title??'заклинания'}»</span>
+            <button type="button" className="battle-undo-choice" onClick={()=>setPendingSpell(null)}>Отменить</button>
+          </div>}
+          {game.phase === 'target' && !pendingSpell && <div className="battle-target-hint" role="status">
               <span>{myTurn ? `Выберите цель: ${game.pendingAction?.label ?? 'действие'}` : `${active?.nickname ?? 'Игрок'} выбирает цель`}</span>
-              {myTurn && <button type="button" className="battle-undo-choice" disabled={!canAct} onClick={()=>onAction('game:cancel-choice',{})}>↶ Другая грань</button>}
+              {myTurn && <button type="button" className="battle-undo-choice" disabled={!canAct} onClick={()=>{setTargetSetup(null);onAction('game:cancel-choice',{});}}>↶ Другая грань</button>}
             </div>}
           <div className="battle-six compact">{faces.map((face,index)=><DieCell key={index} face={face} number={index+1}/>)}</div>
           {game.phase==='choose' && game.rolls ? <>
             <div className="battle-choice-label">{myTurn ? 'ВЫПАЛИ ДВА РЕЗУЛЬТАТА — ВЫБЕРИТЕ ОДИН' : `РЕЗУЛЬТАТЫ БРОСКА: ${active?.nickname ?? 'ИГРОК'}`}</div>
             <div className="battle-roll-results compact">{rolls.map(result=><DieCell key={result.index} face={result.face} number={result.n} action={canAct?()=>onAction('game:choose',result.index):undefined} />)}</div>
-          </> : <div className="battle-roll-note">{game.phase==='target' ? 'Подсвеченные фигурки доступны для выбора цели.' : 'Бросьте два кубика и выберите один результат.'}</div>}
+          </> : <div className="battle-roll-note">{game.phase==='target' ? 'Подсвеченные фигурки доступны для выбора цели.' : game.phase==='spell' ? 'Действие гранью выполнено. Можно колдовать или завершить ход.' : 'Бросьте два кубика и выберите один результат.'}</div>}
           <div className="battle-artifact-stack">
             <div className="artifact-placeholder"><span>✦</span><div><strong>Артефакты</strong><small>{myArtifacts.length ? `Получено: ${myArtifacts.length}` : "Пока не получены"}</small></div></div>
             <div className="artifact-placeholder"><span>◆</span><div><strong>Ресурсы</strong><small>Мана {combatants.get(playerId)?.mana ?? 0}/{combatants.get(playerId)?.maxMana ?? 3} · Щит {combatants.get(playerId)?.shield ?? 0}</small><small className="battle-status-summary">{(combatants.get(playerId)?.effects??[]).map(e=>`${EFFECT_INFO[e.kind].label} ${e.amount}`).join(" · ") || "Нет негативных эффектов"}</small></div></div>
@@ -300,10 +387,20 @@ export function BattleBoard({room,playerId,online,busy,error,onAction,onExit,onC
               {item.kind==='consumable' && !item.spent && <button type="button" disabled={!canAct} onClick={()=>onAction('game:use-artifact',item.instanceId)}>Применить</button>}
             </div>)}
           </div>}
+          {mySpells.length>0 && <div className="battle-spells" aria-label="Заклинания">
+            <div className="battle-section-heading compact"><h2>✧ ЗАКЛИНАНИЯ</h2><span>Мана {combatants.get(playerId)?.mana??0}</span></div>
+            {mySpells.map(option=><div className="battle-spell-entry" key={option.id}>
+              <div className="battle-spell-description"><strong>{option.title}</strong><small>{option.description}</small></div>
+              <button type="button" disabled={!canAct||!option.available||(combatants.get(playerId)?.mana??0)<option.cost} onClick={()=>startSpell(option.id,false)} className={pendingSpell?.id===option.id&&!pendingSpell.free?'selected':''} title={option.description}>
+                {option.cost===0?'Применить':`${option.cost} ✦`}
+              </button>
+              {freeCastReady && option.cost>0 && <button type="button" disabled={!canAct||!option.available} className={pendingSpell?.id===option.id&&pendingSpell.free?'selected':''} onClick={()=>startSpell(option.id,true)}>Бесплатно</button>}
+            </div>)}
+          </div>}
           <div className="battle-action-buttons single-row">
             <button className="button button-primary" disabled={!canAct || game.phase!=='roll'} onClick={()=>onAction('game:roll',{})}><Dice5 size={18}/> Бросить кубики</button>
           </div>
-          <button className="battle-pass-link" disabled={!canAct} onClick={()=>onAction('game:pass',{})}>Пропустить ход</button>
+          <button className="battle-pass-link" disabled={!canAct} onClick={()=>{setPendingSpell(null);onAction('game:pass',{});}}>{game.phase==='spell'?'Завершить ход':'Пропустить ход'}</button>
         </section>
 
         <section className="battle-log panel compact-log">

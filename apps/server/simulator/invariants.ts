@@ -30,7 +30,7 @@ export const invariants: Record<string, Invariant> = {
     if (state.phase==='finished' && !state.result) errors.push('Finished without result');
     if (state.phase==='rest' && state.floor===6) errors.push('Rest after sixth floor');
     if (state.phase==='finished' && state.deadlineAt!==null) errors.push('Finished with running timer');
-    if (state.phase==='roll'||state.phase==='choose'||state.phase==='target') {
+    if (state.phase==='roll'||state.phase==='choose'||state.phase==='target'||state.phase==='spell') {
       if (!state.activePlayerId) errors.push('Active turn without player');
       if (state.deadlineAt===null) errors.push('Active turn without deadline');
     }

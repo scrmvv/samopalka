@@ -123,7 +123,7 @@ export function DebugPanel({room, playerId, busy, onAction, onClose}: Props) {
           <select id="db-effect-target" value={statusId} onChange={e=>setStatusId(e.target.value)}>{allAlive.map(c=><option key={c.id} value={c.id}>{c.name} — {c.id.slice(0,8)}</option>)}</select>
           <div className="battle-debug-row" style={{marginTop:9}}>
             <div><label htmlFor="db-effect">Состояние</label><select id="db-effect" value={statusKind} onChange={e=>setStatusKind(e.target.value)}>{EFFECTS.map(e=><option key={e.id} value={e.id}>{e.label}</option>)}</select></div>
-            <div><label htmlFor="db-amount">Сила</label><input id="db-amount" type="number" min="1" max="10" value={statusAmount} onChange={e=>setStatusAmount(e.target.value)}/></div>
+            <div><label htmlFor="db-amount">Сила</label><input id="db-amount" type="number" min="1" max="500" value={statusAmount} onChange={e=>setStatusAmount(e.target.value)}/></div>
           </div>
           <div className="battle-debug-row" style={{marginTop:10}}>
             <button disabled={!canSubmit} onClick={()=>onAction('debug:status',{id:statusId,kind:statusKind,amount:Number(statusAmount),mode:'add'})}>Наложить</button>

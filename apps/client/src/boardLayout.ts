@@ -102,7 +102,7 @@ function layouts(count:number, stepX:number, stepY:number): Point[][] {
  * space, unlike the previous square-only coordinate system. Candidate layouts
  * are checked against every player, the boss and already placed monsters.
  */
-export function monsterGridPositions<T extends {ownerId:string|null}>(
+export function monsterGridPositions<T extends {ownerId:string|null;behind?:boolean}>(
   monsters:readonly T[], players:readonly string[], size:BoardDimensions={width:1050,height:700}
 ) {
   if(!monsters.length)return [];
@@ -124,6 +124,8 @@ export function monsterGridPositions<T extends {ownerId:string|null}>(
   // Larger transferred groups are placed before isolated monsters.
   const ordered=[...groups.entries()].sort((a,b)=>b[1].length-a[1].length||a[0]-b[0]);
   for(const [ownerIndex,indices] of ordered) {
+    // Front figures form the first rank. «Позади» figures go behind them, closer to the boss.
+    indices.sort((a,b)=>Number(Boolean(monsters[a]?.behind))-Number(Boolean(monsters[b]?.behind))||a-b);
     const owner=playersRects[ownerIndex]??playersRects[0]??{...center,...unit.hero};
     const direction={x:center.x-owner.x,y:center.y-owner.y};
     const magnitude=Math.max(1,Math.hypot(direction.x,direction.y));
@@ -132,7 +134,18 @@ export function monsterGridPositions<T extends {ownerId:string|null}>(
     const anchor={x:owner.x+direction.x*.475,y:owner.y+direction.y*.475};
     let best:Point[]=[];
     let bestScore=Infinity;
-    const patterns=layouts(indices.length,unit.monster.width+unit.gap+12,unit.monster.height+unit.gap+8);
+    const fronts=indices.filter(idx=>!monsters[idx]?.behind).length;
+    const rears=indices.length-fronts;
+    const stepX=unit.monster.width+unit.gap+12;
+    const stepY=unit.monster.height+unit.gap+8;
+    const twoRanks=fronts>0&&rears>0;
+    const rankPattern=twoRanks?indices.map((_,i)=>{
+      const front=i<fronts;
+      const count=front?fronts:rears;
+      const col=front?i:i-fronts;
+      return {x:(col-(count-1)/2)*stepX,y:front?-stepY/2:stepY/2};
+    }):null;
+    const patterns=rankPattern?[rankPattern]:layouts(indices.length,stepX,stepY);
     for(let p=0;p<patterns.length;p++) {
       const pattern=patterns[p]!;
       for(const shiftIn of [0,-35,35,-70,70,-110,110])for(const shiftSide of [0,-35,35,-70,70]) {

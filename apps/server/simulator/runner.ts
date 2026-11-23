@@ -120,6 +120,12 @@ export function simulate(options: SimulationOptions): SimulationResult {
           now=Math.max(now+1,state.deadlineAt??now+500)+1;
           battle.tick(()=>true,id=>id);
           action='tickEnemy';break;
+        case 'spell':{
+          // Existing simulator policies were written before spell actions. Complete
+          // the optional spell window deterministically instead of stalling it.
+          if(!actor)throw new Error('Missing active player');
+          battle.pass(actor,actor);action='endSpellPhase';break;
+        }
         case 'roll':case 'choose':case 'target':{
           if(!actor)throw new Error('Missing active player');
           const idx=heroes.findIndex(h=>h.id===actor);
@@ -163,7 +169,27 @@ function play(battle:BattleSession,id:string,action:PlayerAction){
   switch(action.kind){
     case 'roll':battle.roll(id,id);break;
     case 'choose':battle.choose(id,action.index,id);break;
-    case 'target':battle.target(id,action.id,id);break;
+    case 'target':{
+      const state=battle.snapshot();
+      const label=state.pendingAction?.label.toLocaleLowerCase('ru-RU')??'';
+      const scatterIds=label.includes('разброс')?(state.scatterCandidates?.[action.id]??[]).slice(0,2):[];
+      const selected=[action.id,...scatterIds];
+      const cleanseSelections:Record<string,Record<string,number>>={};
+      if(label.includes('очищение'))for(const targetId of selected){
+        const effects=state.combatants.find(c=>c.id===targetId)?.effects??[];
+        let remaining=state.pendingAction?.value??0;
+        const choices:Record<string,number>={};
+        for(const effect of effects){
+          if(!['poison','weakness','sleep','paralysis','stun','decay'].includes(effect.kind))continue;
+          const count=Math.min(remaining,effect.amount);
+          if(count>0){choices[effect.kind]=count;remaining-=count;}
+        }
+        cleanseSelections[targetId]=choices;
+      }
+      battle.target(id,label.includes('разброс')||label.includes('очищение')
+        ?{targetId:action.id,...(label.includes('разброс')?{scatterIds}:{}),...(label.includes('очищение')?{cleanseSelections}:{})}:action.id,id);
+      break;
+    }
     case 'pass':battle.pass(id,id);break;
   }
 }

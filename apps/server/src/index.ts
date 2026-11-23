@@ -25,7 +25,7 @@ const manager = new RoomManager(code => {
   if (socket) { socket.emit('room:kicked', reason); setTimeout(() => socket.disconnect(true), 150).unref(); }
 }, DEBUG_TOOLS);
 
-app.get('/api/health', (_, res) => res.json({ ok: true, name: 'Самопалка', stage: '3.4.3-test' }));
+app.get('/api/health', (_, res) => res.json({ ok: true, name: 'Самопалка', stage: '3.4.4-test' }));
 app.get('/api/network', (_, res) => {
   const interfaces = Object.values(networkInterfaces()).flatMap(items => items ?? []);
   const addresses = [...new Set(interfaces.filter(ip => ip.family === 'IPv4' && !ip.internal).map(ip => ip.address))];
@@ -89,6 +89,7 @@ io.on('connection', (socket: Socket) => {
     manager.settings(socket.id, input ?? {});
     return true;
   }));
+  socket.on('room:kick', (input, ack: Done) => handle(ack, () => manager.kick(socket.id, input?.playerId)));
   socket.on('room:start', (_input, ack: Done) => handle(ack, () => {
     manager.start(socket.id);
     return true;
@@ -99,6 +100,7 @@ io.on('connection', (socket: Socket) => {
   socket.on('game:cancel-choice', (_input, ack: Done) => handle(ack, () => manager.cancelDiceChoice(socket.id)));
   socket.on('game:target', (targetId, ack: Done) => handle(ack, () => manager.selectTarget(socket.id, targetId)));
   socket.on('game:pass', (_input, ack: Done) => handle(ack, () => manager.passTurn(socket.id)));
+  socket.on('game:cast-spell', (input, ack: Done) => handle(ack, () => manager.castSpell(socket.id,input?.spellId,input?.targetId,input?.free===true)));
   socket.on('game:roll-camp', (_input, ack: Done) => handle(ack, () => manager.rollCamp(socket.id)));
   socket.on('game:claim-reward', (input, ack: Done) => handle(ack, () => manager.claimReward(socket.id, input?.choice, input?.faceIndex)));
   socket.on('game:use-artifact', (instanceId, ack: Done) => handle(ack, () => manager.useArtifact(socket.id, instanceId)));

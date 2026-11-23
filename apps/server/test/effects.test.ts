@@ -14,7 +14,7 @@ function fixture(heroIds:HeroId[]=['warrior','healer'], rolls:number[]=[5,5]){
   const intern=s as unknown as {
     actor(id:string):CombatantSnapshot|undefined;
     foeDefinitions:Map<string,FoeDefinition>;
-    harm(target:CombatantSnapshot,amount:number,label:string,opts?:{poison?:boolean,sourceId?:string,faceIndex?:number}):number;
+    harm(target:CombatantSnapshot,amount:number,label:string,opts?:{poison?:boolean,sourceId?:string,faceIndex?:number,strikeWord?:boolean}):number;
     attackByEnemy(enemy:CombatantSnapshot,target:CombatantSnapshot):void;
     bossPhase():void;
     monsterPhase(id:string):void;

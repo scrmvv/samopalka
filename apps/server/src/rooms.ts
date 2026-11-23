@@ -3,6 +3,7 @@ import { HEROES, type HeroId, type PlayerPublic, type RoomSnapshot, type RoomSta
 import { BattleSession, BattleError } from './battle.js';
 import { FOES } from './foes.js';
 import { ARTIFACTS } from './artifacts.js';
+import { SPELL_ARTIFACT_CARDS, SPELL_PASSIVE_CARDS } from './spells.js';
 
 const CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const RECONNECT_MS = 60_000;
@@ -96,7 +97,7 @@ export class RoomManager {
       ...(r.game ? { game: r.game.snapshot() } : {}),
       ...(this.debugEnabled ? {debug: {
         foes: FOES.map(f=>({id:f.id,name:f.name,floor:f.floor,hp:f.hp,boss:f.boss})),
-        artifacts: ARTIFACTS.map(a=>({id:a.id,title:a.title,description:a.description,tier:a.tier,group:a.group,kind:a.kind}))
+        artifacts: [...ARTIFACTS,...SPELL_ARTIFACT_CARDS,...SPELL_PASSIVE_CARDS].map(a=>({id:a.id,title:a.title,description:a.description,tier:a.tier,group:a.group,kind:a.kind}))
       }} : {}),
       players: r.players.map((p): PlayerPublic => ({
         id: p.id, nickname: p.nickname, heroId: p.heroId,
@@ -193,6 +194,20 @@ export class RoomManager {
     return room.code;
   }
 
+  /** Lobby host may remove a participant without ending the room. */
+  kick(socketId: string, participantId: unknown) {
+    const {room,player}=this.requireMember(socketId);
+    this.requireLobby(room);this.requireHost(room,player);
+    if(typeof participantId!=='string')throw new RoomError('Выберите игрока.');
+    if(participantId===player.id)throw new RoomError('Хост не может исключить себя.');
+    const victim=room.players.find(p=>p.id===participantId);
+    if(!victim)throw new RoomError('Игрок уже покинул комнату.');
+    const oldSocket=victim.socketId;
+    this.remove(room,victim);
+    if(oldSocket)this.onKick?.(oldSocket,'Хост исключил вас из комнаты.');
+    return room.code;
+  }
+
   start(socketId: string) {
     const { room, player } = this.requireMember(socketId);
     this.requireLobby(room);
@@ -202,7 +217,7 @@ export class RoomManager {
       throw new RoomError('Все игроки должны выбрать героя, быть в сети и нажать «Готов».');
     }
     room.status = 'started';
-    room.game = new BattleSession(room.players.map(p => ({ id: p.id, heroId: p.heroId! })), this.clock);
+    room.game = new BattleSession(room.players.map(p => ({ id: p.id, heroId: p.heroId!, nickname:p.nickname })), this.clock);
     this.touch(room);
     return room.code;
   }
@@ -259,6 +274,12 @@ export class RoomManager {
     try { game.pass(player.id, player.nickname); } catch (e) { if (e instanceof BattleError) throw new RoomError(e.message); throw e; }
     this.touch(room);
     return room.code;
+  }
+
+  castSpell(socketId:string,spellId:unknown,targetId?:unknown,free=false){
+    const {room,player,game}=this.battleMember(socketId);
+    try {game.castSpell(player.id,spellId,targetId,free);} catch(e){if(e instanceof BattleError)throw new RoomError(e.message);throw e;}
+    this.touch(room);return room.code;
   }
 
   rollCamp(socketId:string){

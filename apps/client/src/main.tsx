@@ -81,7 +81,14 @@ function App() {
     function disconnected() { setOnline(false); }
     function received(snapshot: RoomSnapshot) { setRoom(snapshot); }
     function closed() { storage.remove('room'); setRoom(null); setPlayerId(''); setError('Комната закрыта.'); }
-    function kicked(reason: string) { storage.remove('room'); setRoom(null); setPlayerId(''); setError(reason || 'Вы исключены из комнаты.'); window.setTimeout(() => SOCKET.connect(), 150); }
+    function kicked(reason: string) {
+      storage.remove('room');setRoom(null);setPlayerId('');
+      setError(reason || 'Вы исключены из комнаты.');
+      // The server disconnects 150ms after the kick. Reset locally FIRST and
+      // reconnect afterwards, otherwise the old socket stays on a dead screen.
+      SOCKET.disconnect();
+      window.setTimeout(()=>{if(active) SOCKET.connect();},300);
+    }
     function replaced() {
       storage.remove('room'); setRoom(null); setPlayerId('');
       setError('Эта сессия открыта в другом окне.');
@@ -206,6 +213,7 @@ function App() {
         <div className="players">{Array.from({length: room.maxPlayers}, (_, i) => { const p = room.players[i]; const hero = HEROES.find(h => h.id === p?.heroId); return <div className={'player-line ' + (p ? '' : 'empty') + (p?.id === playerId ? ' own' : '') + (p?.ready && p?.connected ? ' member-ready' : '')} key={i}>
           <div className="player-avatar" style={hero ? {'--avatar-color': hero.color} as React.CSSProperties : undefined}>{hero ? <HeroSprite id={hero.id} compact/> : (p ? '◇' : <Plus size={17}/>)}</div>
           <div className="player-meta"><div className="player-name">{p?.nickname ?? 'Свободное место'}{p?.isHost && <Crown size={14} className="crown"/>}{p?.id === playerId && <span className="you">ВЫ</span>}</div><div className="player-class">{p ? (hero ? hero.name : 'Герой не выбран') : 'Ожидаем участника...'}</div></div>
+          {isHost && p && p.id!==playerId && room.status==='lobby' && <button type="button" className="lobby-kick" title={`Исключить ${p.nickname}`} aria-label={`Исключить ${p.nickname}`} disabled={busy} onClick={()=>{if(window.confirm(`Исключить игрока ${p.nickname} из лобби?`))void act('room:kick',{playerId:p.id});}}><X size={15}/></button>}
           {p && <div className={'status ' + (p.connected ? p.ready ? 'status-ready' : 'status-wait' : 'status-away')}>{!p.connected ? 'Не в сети' : p.ready ? <><Check size={13}/> Готов</> : 'Не готов'}</div>}
         </div>; })}</div>
         {room.status === 'lobby' ? <div className="member-bottom"><div className="ready-note">{room.players.length < 2 ? 'Для старта требуется минимум два игрока.' : room.players.every(p => p.ready && p.connected) ? 'Все участники готовы к началу.' : 'Партия начнётся, когда все выберут героев и подтвердят готовность.'}</div>

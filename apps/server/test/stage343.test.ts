@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { BattleSession } from '../src/battle.js';
 import { RoomManager } from '../src/rooms.js';
 import { ARTIFACTS } from '../src/artifacts.js';
+import { SPELL_ARTIFACT_CARDS,SPELL_PASSIVE_CARDS } from '../src/spells.js';
 import { FOES } from '../src/foes.js';
 import type { CombatantSnapshot } from '@samopalka/shared';
 
@@ -50,7 +51,7 @@ function hostRoom(debug=true){
 
 test('3.4.3: test panel lists supported artifacts; only host may grant them',()=>{
   const {manager,code,playerId}=hostRoom();
-  assert.equal(manager.snapshot(code)?.debug?.artifacts.length,ARTIFACTS.length);
+  assert.equal(manager.snapshot(code)?.debug?.artifacts.length,ARTIFACTS.length+SPELL_ARTIFACT_CARDS.length+SPELL_PASSIVE_CARDS.length);
   const card=ARTIFACTS.find(a=>a.kind==='face')!;
   assert.throws(()=>manager.debugAction('g','debug:artifact',{playerId,artifactId:card.id,faceIndex:1}),/хосту/);
   assert.throws(()=>manager.debugAction('h','debug:artifact',{playerId,artifactId:'not-an-artifact',faceIndex:1}),/не найден/);

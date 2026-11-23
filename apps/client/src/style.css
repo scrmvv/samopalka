@@ -296,3 +296,7 @@ a {color:inherit}
   .overline,.field-label,.trail-label {font-size:8px}
   .intro>p {font-size:13px}
 }
+
+/* Host lobby moderation */
+.lobby-kick{border:1px solid #79524e;background:rgba(86,37,35,.16);color:#dd9a92;border-radius:7px;padding:5px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0}
+.lobby-kick:hover{background:rgba(128,55,48,.24)}

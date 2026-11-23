@@ -3,6 +3,7 @@ import type { CombatTelemetryListener } from './combatTelemetry.js';
 import { HEROES, HERO_DICE, type BattleSnapshot, type BattleEvent, type HeroId, type CombatantSnapshot, type PendingAction, type BattleVisual, type DiceFace, type ArtifactCard, type ArtifactItem, type RewardDraft } from '@samopalka/shared';
 import { FOES, type FoeDefinition } from './foes.js';
 import { ARTIFACTS } from './artifacts.js';
+import { HERO_SPELLS, ARTIFACT_SPELLS, SPELL_ARTIFACT_CARDS, SPELL_PASSIVE_CARDS, type SpellDefinition, type SpellPart } from './spells.js';
 import { printedFoeAction, statusValue, addEffect, clearEffect, consumeEffect, armorFor, hasFoeTrait } from './effectRules.js';
 
 export class BattleError extends Error {}
@@ -25,6 +26,7 @@ export class BattleSession {
   private playerIds: string[];
   private readonly originalPlayerCount: number;
   private heroes: Map<string, HeroId>;
+  private nicknames = new Map<string,string>();
   private combatants = new Map<string, CombatantSnapshot>();
   private foeDefinitions = new Map<string, FoeDefinition>();
   private activeIndex = 0;
@@ -60,6 +62,18 @@ export class BattleSession {
   private allFaceBonuses = new Map<string,number>();
   private inventories = new Map<string,ArtifactItem[]>();
   private artifactSerial = 0;
+  /** Counts are isolated to a hero's present turn. */
+  private spellUses = new Map<string,Map<string,number>>();
+  private spellCasts = new Map<string,number>();
+  private spelllessLastTurn = new Map<string,boolean>();
+  private reactiveStrikes = new Set<string>();
+  private spellStrength = new Map<string,number>();
+  private nextManaBonus = new Map<string,number>();
+  private healingFaces = new Map<string,number>();
+  private immortalCharges = new Map<string,number>();
+  private pendingExtraTurn = false;
+  private extraTurnFor: string | null = null;
+  private remainingExtraTurns = new Map<string,number>();
   private rewardQueue: string[] = [];
   private rewardOffers: ArtifactCard[] = [];
   private rewardDeck: ArtifactCard[] = [];
@@ -72,7 +86,7 @@ export class BattleSession {
   private readonly rewardDurationMs = 60_000;
 
   constructor(
-    players: { id: string; heroId: HeroId }[],
+    players: { id: string; heroId: HeroId; nickname?: string }[],
     private readonly now: () => number = Date.now,
     private readonly die: () => number = () => randomInt(1, 7),
     private readonly pickIndex: (length: number) => number = length => randomInt(0, length),
@@ -81,6 +95,7 @@ export class BattleSession {
     this.playerIds = players.map(p => p.id);
     this.originalPlayerCount = players.length;
     this.heroes = new Map(players.map(p => [p.id,p.heroId]));
+    this.nicknames = new Map(players.map(p=>[p.id,p.nickname??'']));
     for (const player of players) {
       const hero = HEROES.find(h => h.id === player.heroId);
       if (!hero) throw new BattleError('Неизвестный герой.');
@@ -106,6 +121,10 @@ export class BattleSession {
     return pool.splice(index,1)[0]!;
   }
   private actor(id:string){return this.combatants.get(id);}
+  private shown(entity: CombatantSnapshot) {
+    const nickname=entity.kind==='hero'?this.nicknames.get(entity.id):'';
+    return nickname?`${entity.name} «${nickname}»`:entity.name;
+  }
   private livingHeroes(){return this.playerIds.filter(id=>this.actor(id)?.alive);}
   private livingEnemies(){return [...this.combatants.values()].filter(c=>c.kind!=='hero'&&c.alive);}
   activePlayer(){return this.playerIds[this.activeIndex]??null;}
@@ -155,7 +174,7 @@ export class BattleSession {
     }
   }
   private assertActive(playerId:string){
-    if(!['roll','choose','target'].includes(this.phase)) throw new BattleError('Сейчас нельзя выполнять ход.');
+    if(!['roll','choose','target','spell'].includes(this.phase)) throw new BattleError('Сейчас нельзя выполнять ход.');
     if(this.activePlayer()!==playerId) throw new BattleError('Сейчас ход другого игрока.');
     if(!this.actor(playerId)?.alive) throw new BattleError('Выбывший герой не может ходить.');
     if(this.deadlineAt===null||this.now()>=this.deadlineAt) throw new BattleError('Время хода истекло.');
@@ -175,6 +194,41 @@ export class BattleSession {
       if(!anyRange&&this.isBehind(c)&&[...this.combatants.values()].some(other=>other.kind==='monster'&&other.alive&&other.ownerId===c.ownerId&&!this.isBehind(other)))return false;
       return true;
     }).map(c=>c.id);
+  }
+  /** Neighboring figures can be chosen, not selected automatically. */
+  private scatterCandidates(mainId:string):string[]{
+    const center=this.actor(mainId);
+    if(!center?.alive)return [];
+    if(center.kind==='hero')return this.neighbors(mainId).filter(id=>this.actor(id)?.alive);
+    const monsters=this.livingEnemies().filter(c=>c.kind==='monster'&&c.id!==mainId);
+    if(center.kind==='boss')return monsters.map(c=>c.id);
+    const seat=this.playerIds.indexOf(center.ownerId??'');
+    const adjacentOwners=new Set([this.playerIds[(seat-1+this.playerIds.length)%this.playerIds.length],this.playerIds[(seat+1)%this.playerIds.length]]);
+    return [...monsters.filter(c=>c.ownerId===center.ownerId),...monsters.filter(c=>adjacentOwners.has(c.ownerId??''))].map(c=>c.id);
+  }
+  /** Cleansing spends points on individual negative-effect strength; petrification is permanent until death. */
+  private cleanseable(entity:CombatantSnapshot){
+    return (entity.effects??[]).filter(e=>['poison','weakness','stun','sleep','paralysis','decay'].includes(e.kind) && e.amount>0);
+  }
+  private cleanseSelected(entity:CombatantSnapshot,points:number,raw:unknown,label:string){
+    const effects=this.cleanseable(entity);
+    const total=effects.reduce((n,e)=>n+e.amount,0);
+    const target=Math.min(points,total);
+    if(target===0)return;
+    if(!raw||typeof raw!=='object'||Array.isArray(raw))throw new BattleError('Выберите, какие отрицательные эффекты очищать.');
+    const selections=raw as Record<string,unknown>;
+    let sum=0;
+    for(const [kind,amount] of Object.entries(selections)){
+      const existing=effects.find(e=>e.kind===kind);
+      if(!existing||!Number.isInteger(amount)||Number(amount)<0||Number(amount)>existing.amount)
+        throw new BattleError('Неверное распределение очищения.');
+      sum+=Number(amount);
+    }
+    if(sum!==target)throw new BattleError(`Распределите ровно ${target} единиц очищения.`);
+    for(const [kind,amount] of Object.entries(selections)){
+      for(let i=0;i<Number(amount);i++)consumeEffect(entity,kind as typeof effects[number]['kind']);
+      if(Number(amount))this.log(`${label}: очищение «${this.shown(entity)}», ${kind} −${amount}.`,'action');
+    }
   }
   private possibleTargets(id:string,action:PendingAction):string[]{
     if(!this.actor(id)?.alive)return [];
@@ -212,11 +266,15 @@ export class BattleSession {
       const weak=statusValue(this.actor(id)!, 'weakness');
       const decay=this.decayedFaces.get(id)?.get(index) ?? 0;
       const growth=this.grownFaces.get(id)?.get(index) ?? 0;
-      const bonus=(this.faceBonuses.get(id)?.get(index)??0)+(this.allFaceBonuses.get(id)??0);
+      const bonus=(this.faceBonuses.get(id)?.get(index)??0)+(this.allFaceBonuses.get(id)??0)+(this.spellStrength.get(id)??0);
       const doubled=this.faceDoubles.get(id)?.has(index) ? 2 : 1;
       const value=Math.max(0,(face.value+bonus)*doubled+growth-decay-weak);
       const delta=value-face.value;
-      if(delta && face.kind!=='empty') return {...face,value,label:face.label+` (${delta>0?'+':''}${delta})`};
+      if(delta && face.kind!=='empty') {
+        // Show the CURRENT face strength, not the original printed value.
+        const label=/\d/.test(face.label)?face.label.replace(/\d+(?!.*\d)/,String(value)):face.label+` ${value}`;
+        return {...face,value,label:label+` (${delta>0?'+':''}${delta})`};
+      }
       return face;
     });
   }
@@ -225,7 +283,10 @@ export class BattleSession {
       floor:this.floor,round:this.round,activePlayerId:this.activePlayer(),phase:this.phase,
       deadlineAt:this.deadlineAt,serverTime:this.now(),rolls:this.dice?[...this.dice] as [number,number]:null,
       events:[...this.events],missedTurns:Object.fromEntries(this.consecutiveMisses),
-      combatants:[...this.combatants.values()].map(c=>({...c,effects:c.effects?.map(e=>({...e}))??[]})),
+      combatants:[...this.combatants.values()].map(c=>({
+        ...c,effects:[...(c.effects?.map(e=>({...e}))??[]),
+          ...(c.kind==='hero'&&(this.petrifiedFaces.get(c.id)?.size??0)>0?[{kind:'petrified' as const,amount:1}]:[])]
+      })),
       diceFaces:Object.fromEntries(this.playerIds.filter(id=>this.heroes.has(id)).map(id=>[id,this.computedFaces(id)])),
       foeInfo:Object.fromEntries([...this.foeDefinitions].map(([id,def])=>{
         const action=printedFoeAction(def);
@@ -249,8 +310,12 @@ export class BattleSession {
         completed:this.campPending.size===0
       }:null,
       inventories:Object.fromEntries(this.playerIds.map(id=>[id,(this.inventories.get(id)??[]).map(x=>({...x,face:x.face?{...x.face}:undefined}))])),
+      spells:Object.fromEntries(this.playerIds.map(id=>[id,this.spellChoices(id)])),
+      spellFree:Object.fromEntries(this.playerIds.map(id=>[id,this.canCastFree(id)])),
       pendingAction:this.pendingAction?{...this.pendingAction}:null,
       availableTargetIds:this.phase==='target'&&this.activePlayer()&&this.pendingAction?this.possibleTargets(this.activePlayer()!,this.pendingAction):[],
+      scatterCandidates:this.phase==='target'&&this.pendingAction?.label.toLocaleLowerCase('ru-RU').includes('разброс')
+        ?Object.fromEntries(this.possibleTargets(this.activePlayer()!,this.pendingAction).map(id=>[id,this.scatterCandidates(id)])):{},
       result:this.result
     };
   }
@@ -355,7 +420,11 @@ export class BattleSession {
       faces[idx]={...card.face!};this.artifactFaces.set(playerId,faces);
       this.decayedFaces.get(playerId)?.delete(idx);this.grownFaces.get(playerId)?.delete(idx);
     }else if(card.kind==='hp'){
-      hero.hp=Math.min(hero.maxHp,hero.hp+(card.amount??0));
+      // 'Полные единицы здоровья': raise BOTH current and maximum HP.
+      const amount=card.amount??0;
+      const next=Math.min(500,hero.maxHp+amount);
+      hero.hp=Math.min(next,hero.hp+(next-hero.maxHp));
+      hero.maxHp=next;
     }else if(card.kind==='maxhp'){
       hero.maxHp=Math.min(500,hero.maxHp+(card.amount??0));
     }else if(card.kind==='buffall'){
@@ -374,11 +443,153 @@ export class BattleSession {
     const data=input as Record<string,unknown>;
     if(typeof data.playerId!=='string'||!this.heroes.has(data.playerId))throw new BattleError('Выберите героя.');
     if(typeof data.artifactId!=='string')throw new BattleError('Выберите артефакт.');
-    const card=ARTIFACTS.find(a=>a.id===data.artifactId);
+    const card=[...ARTIFACTS,...SPELL_ARTIFACT_CARDS,...SPELL_PASSIVE_CARDS].find(a=>a.id===data.artifactId);
     if(!card)throw new BattleError('Артефакт не найден в поддерживаемом каталоге.');
     const item=this.applyArtifact(data.playerId,card,data.faceIndex);
     const hero=this.actor(data.playerId)!;
     this.log(`[ТЕСТ] ${hero.name} получает «${item.title}»${item.faceIndex===undefined?'':` для грани ${item.faceIndex+1}`}.`,'system');
+  }
+
+  private passive(id:string,artifactId:string):boolean {
+    return (this.inventories.get(id)??[]).some(item=>item.id===artifactId&&!item.spent);
+  }
+  private canCastFree(id:string):boolean {
+    return this.passive(id,'spellpassive-278') || (this.passive(id,'spellpassive-346') && (this.spelllessLastTurn.get(id)??true) && (this.spellCasts.get(id)??0)===0);
+  }
+  private definitions(id:string):SpellDefinition[] {
+    const own=this.inventories.get(id)??[];
+    const native=this.heroes.get(id)==='adept'?HERO_SPELLS.filter(s=>s.id.startsWith('hero-adept-')):
+      this.heroes.get(id)==='healer'?HERO_SPELLS.filter(s=>s.id.startsWith('hero-healer-')):[];
+    const owned=new Set(own.filter(a=>a.kind==='spell'&&!a.spent).map(a=>a.id));
+    return [...native,...ARTIFACT_SPELLS.filter(s=>s.artifactId!==null&&owned.has(s.artifactId))];
+  }
+  private spellTargetIds(actorId:string,def:SpellDefinition):string[]{
+    if(def.target==='none')return [];
+    if(def.target==='self')return [actorId];
+    if(def.target==='deadHero')return this.playerIds.filter(id=>!!this.actor(id)&&!this.actor(id)!.alive);
+    if(def.target==='hero')return this.livingHeroes();
+    if(def.target==='enemy')return this.availableMonsters(actorId,!!def.ranged);
+    // Single-figure actions use normal line-of-sight/range rules, but spell effects
+    // may target either an enemy or a hero unless the card says otherwise.
+    const kind=def.parts.some(part=>part.word==='strike'||part.word==='execute'||part.word==='kill'||part.word==='poison')?'strike':'heal';
+    return [...new Set([
+      ...this.possibleTargets(actorId,{kind,value:1,label:def.ranged?'Дальность':'Заклинание'}),
+      ...(kind==='heal'?[actorId]:[])
+    ])];
+  }
+  private spellCost(id:string,def:SpellDefinition):number {
+    const times=this.spellUses.get(id)?.get(def.id)??0;
+    const reductions=(def.repeatCost?times:0)+(this.passive(id,'spellpassive-348')?(this.spellCasts.get(id)??0):0);
+    return Math.max(1,def.cost-reductions);
+  }
+  private spellChoices(id:string){
+    const current=this.activePlayer()===id&&['roll','choose','target','spell'].includes(this.phase)&&this.now()<(this.deadlineAt??-1)&&!!this.actor(id)?.alive;
+    const choices=this.definitions(id).map(def=>{
+      const cost=this.spellCost(id,def);
+      const targets=this.spellTargetIds(id,def);
+      const spent=def.once&&(this.spellUses.get(id)?.get(def.id)??0)>0;
+      const canPay=(this.actor(id)?.mana??0)>=cost;
+      const available=current&&!spent&&(canPay||this.canCastFree(id))&&(def.target==='none'||targets.length>0);
+      return {id:def.id,artifactId:def.artifactId,title:def.title,description:def.description,cost,targets,available};
+    });
+    if(this.reactiveStrikes.has(id)){
+      const targets=this.possibleTargets(id,{kind:'strike',value:1,label:'Удар 1'});
+      choices.push({id:'spell-react-138',artifactId:'spellpassive-138',title:'Ответный удар 1',description:'Бесплатный удар после заклинания',cost:0,targets,available:current&&targets.length>0});
+    }
+    return choices;
+  }
+  private hasSpellOpportunity(id:string){
+    return this.definitions(id).length>0 && ((this.actor(id)?.mana??0)>0||this.canCastFree(id));
+  }
+  private groupTargets(actorId:string,selectedId:string|undefined,group:SpellPart['group'],scatter=false):CombatantSnapshot[] {
+    let ids:string[]=[];
+    if(group==='selected')ids=selectedId?[selectedId]:[];
+    if(group==='self')ids=[actorId];
+    if(group==='allHeroes')ids=this.livingHeroes();
+    if(group==='allMonsters')ids=this.livingEnemies().map(c=>c.id);
+    if(group==='allEntities')ids=[...this.combatants.values()].filter(c=>c.alive).map(c=>c.id);
+    if(group==='allWounded')ids=[...this.combatants.values()].filter(c=>c.alive&&c.hp<c.maxHp).map(c=>c.id);
+    if(scatter&&group==='selected'&&selectedId)ids=[...ids,...this.scatterCandidates(selectedId).slice(0,2)];
+    return [...new Set(ids)].map(id=>this.actor(id)).filter((c):c is CombatantSnapshot=>!!c);
+  }
+  private slainBySpell(target:CombatantSnapshot,label:string){
+    if(!target.alive)return;
+    target.hp=0;target.alive=false;target.effects=[];target.shield=0;
+    this.petrifiedFaces.delete(target.id);this.decayedFaces.delete(target.id);
+    this.grownFaces.delete(target.id);this.foeFaceChanges.delete(target.id);
+    this.log(`${label}: «${this.shown(target)}» погибает.`,'action',{type:'strike',targetId:target.id});
+    if(target.kind==='hero')this.transferMonsters(target.id);
+  }
+  /** All spell rules resolve on the server; user input never specifies spell cost or effect. */
+  castSpell(id:string,spellId:unknown,targetId?:unknown,free=false){
+    this.assertActive(id);
+    if(typeof spellId!=='string')throw new BattleError('Заклинание не найдено.');
+    const reaction=spellId==='spell-react-138'&&this.reactiveStrikes.has(id);
+    const def=reaction?{id:'spell-react-138',artifactId:'spellpassive-138',title:'Ответный удар 1',description:'',cost:0,target:'one' as const,parts:[{word:'strike' as const,amount:1,group:'selected' as const}]}:
+      this.definitions(id).find(s=>s.id===spellId);
+    if(!def)throw new BattleError('Заклинание недоступно.');
+    const count=this.spellUses.get(id)?.get(def.id)??0;
+    if(def.once&&count>0)throw new BattleError('Заклинание уже использовано: лимит один раз за ход.');
+    const targets=this.spellTargetIds(id,def);
+    const selected=def.target==='self'?id:typeof targetId==='string'?targetId:undefined;
+    if(def.target!=='none'&&(!selected||!targets.includes(selected)))throw new BattleError('Недопустимая цель заклинания.');
+    if(typeof free!=='boolean')throw new BattleError('Неверный способ оплаты заклинания.');
+    const cost=reaction?0:this.spellCost(id,def);
+    if(free&&!this.canCastFree(id))throw new BattleError('Бесплатное заклинание недоступно.');
+    const actor=this.actor(id)!;
+    if(!free&&actor.mana<cost)throw new BattleError('Недостаточно маны.');
+    if(!free)actor.mana-=cost;
+    else if(this.passive(id,'spellpassive-278'))this.inventories.get(id)!.find(a=>a.id==='spellpassive-278'&&!a.spent)!.spent=true;
+    this.log(`${this.shown(actor)} применяет «${def.title}»${free?' бесплатно':` за ${cost} маны`}.`,'action',{type:'mana',actorId:id});
+    const used=this.spellUses.get(id)??new Map<string,number>();
+    used.set(def.id,count+1);this.spellUses.set(id,used);
+    if(reaction)this.reactiveStrikes.delete(id);
+    else this.spellCasts.set(id,(this.spellCasts.get(id)??0)+1);
+    const deadBefore=new Set([...this.combatants.values()].filter(c=>!c.alive).map(c=>c.id));
+    for(const part of def.parts){
+      const recipients=this.groupTargets(id,selected,part.group,!!def.scatter);
+      for(const target of recipients){
+        if(!target.alive&&part.word!=='revive')continue;
+        switch(part.word){
+          case 'strike':this.harm(target,part.amount,def.title,{sourceId:id,strikeWord:true});break;
+          case 'heal':this.heal(target,part.amount,def.title,id);break;
+          case 'shield':target.shield+=part.amount;this.log(`${target.name}: щит +${part.amount}.`,'action',{type:'shield',targetId:target.id});break;
+          case 'strengthen':this.spellStrength.set(target.id,(this.spellStrength.get(target.id)??0)+part.amount);break;
+          case 'poison':this.addStatus(target,'poison',part.amount,id);break;
+          case 'weakness':this.addStatus(target,'weakness',part.amount,id);break;
+          case 'pain':this.harm(target,part.amount,`${def.title}: Боль`,{sourceId:id});break;
+          case 'taunt':if(target.kind==='monster')target.ownerId=id;break;
+          case 'execute':if(target.hp<=part.amount){this.slainBySpell(target,def.title);}break;
+          case 'cleanse':{
+            let n=part.amount;
+            for(const effect of [...this.cleanseable(target)])while(n>0&&statusValue(target,effect.kind)>0){consumeEffect(target,effect.kind);n--;}
+            break;
+          }
+          case 'maxhp':target.maxHp+=part.amount;break;
+          case 'painFaces':this.addStatus(target,'paralysis',part.amount,id);break;
+          case 'healFaces':if(target.kind==='hero')this.healingFaces.set(target.id,(this.healingFaces.get(target.id)??0)+part.amount);break;
+          case 'nextMana':this.nextManaBonus.set(target.id,(this.nextManaBonus.get(target.id)??0)+part.amount);break;
+          case 'regeneration':this.addStatus(target,'regeneration',part.amount,id);break;
+          case 'dodge':this.addStatus(target,'dodge',part.amount,id);break;
+          case 'immortal':this.immortalCharges.set(target.id,(this.immortalCharges.get(target.id)??0)+part.amount);this.log(`${target.name} получает бессмертие до следующего хода.`,'action');break;
+          case 'sethp':target.hp=Math.min(target.maxHp,part.amount);break;
+          case 'revive':if(deadBefore.has(target.id)){target.alive=true;target.hp=Math.min(target.maxHp,Math.max(1,part.amount));target.effects=[];this.log(`${target.name} возвращается к жизни.`,'action');}break;
+          case 'extraTurn':this.remainingExtraTurns.set(target.id,(this.remainingExtraTurns.get(target.id)??0)+part.amount);break;
+          case 'kill':this.slainBySpell(target,def.title);break;
+        }
+      }
+    }
+    if(def.killMana && selected && !this.actor(selected)?.alive)actor.mana+=def.killMana;
+    if(!reaction){
+      for(const owner of this.playerIds){
+        const other=this.actor(owner);
+        if(!other?.alive)continue;
+        if(this.passive(owner,'spellpassive-026'))this.heal(other,1,'Лечение за заклинания',owner);
+        if(this.passive(owner,'spellpassive-341'))other.shield+=3;
+      }
+      if(this.passive(id,'spellpassive-138'))this.reactiveStrikes.add(id);
+    }
+    this.checkTerminal();
   }
 
   useArtifact(playerId:string,instanceId:unknown){
@@ -462,8 +673,8 @@ export class BattleSession {
     const kinds=['poison','weakness','stun','sleep','paralysis','dodge','regeneration','decay'];
     if(typeof data.kind!=='string'||!kinds.includes(data.kind))throw new BattleError('Неизвестное состояние.');
     if(data.mode!=='add'&&data.mode!=='clear')throw new BattleError('Укажите действие с эффектом.');
-    if(data.mode==='add'&&(!Number.isInteger(data.amount)||Number(data.amount)<1||Number(data.amount)>10))
-      throw new BattleError('Сила эффекта: от 1 до 10.');
+    if(data.mode==='add'&&(!Number.isInteger(data.amount)||Number(data.amount)<1||Number(data.amount)>500))
+      throw new BattleError('Сила эффекта: от 1 до 500.');
     const kind=data.kind as Parameters<typeof addEffect>[1];
     if(kind==='decay'){
       // Debug-only: select a face explicitly; legacy debug requests default to face 1.
@@ -504,7 +715,7 @@ export class BattleSession {
     this.log(`[ТЕСТ] ${entity.kind==='boss'?'Босс':'Монстр'} заменён на «${entity.name}» (${entity.hp} HP).`,'system',{type:'turn',targetId:entity.id});
   }
   debugExtendTurn(input:unknown){
-    if(!['roll','choose','target'].includes(this.phase))throw new BattleError('Продлить можно только ход героя.');
+    if(!['roll','choose','target','spell'].includes(this.phase))throw new BattleError('Продлить можно только ход героя.');
     if(!Number.isInteger(input)||Number(input)<10||Number(input)>600)throw new BattleError('Добавьте от 10 до 600 секунд.');
     this.deadlineAt=Math.max(this.deadlineAt??this.now(),this.now())+Number(input)*1000;
     this.log(`[ТЕСТ] Таймер продлён на ${input} сек.`,'system');
@@ -557,6 +768,10 @@ export class BattleSession {
     }
     this.phase='target';
     if(!this.possibleTargets(id,this.pendingAction).length){
+      if(this.pendingAction.label.toLocaleLowerCase('ru-RU').includes('мана')){
+        this.actor(id)!.mana+=this.pendingAction.value;
+        this.log(`${name} получает ${this.pendingAction.value} маны от грани.`, 'action',{type:'mana',targetId:id});
+      }
       this.log('Нет доступных целей; действие завершено без эффекта.','system');
       this.completeAction(id);
     }
@@ -572,7 +787,7 @@ export class BattleSession {
     if(!target.alive||amount<=0)return;
     addEffect(target,kind,amount,source);
     const names:Record<string,string>={poison:'Яд',weakness:'Слабость',stun:'Оглушение',sleep:'Сон',paralysis:'Паралич',dodge:'Уворот',regeneration:'Регенерация',decay:'Гниение',petrified:'Окаменение'};
-    this.log(`«${target.name}»: ${names[kind]} ${amount}.`,'action',{type:'mana',targetId:target.id});
+    this.log(`«${this.shown(target)}»: ${names[kind]}${['stun','sleep','paralysis','petrified'].includes(kind)?'':` ${amount}`}.`,'action',{type:'mana',targetId:target.id});
     this.telemetry?.({type:'status',floor:this.floor,sourceId:source??null,targetId:target.id,status:kind,amount});
   }
   private heal(target:CombatantSnapshot,amount:number,label:string,sourceId?:string){
@@ -580,7 +795,7 @@ export class BattleSession {
     const value=Math.min(Math.max(0,amount),target.maxHp-target.hp);
     target.hp+=value;
     this.telemetry?.({type:'heal',floor:this.floor,sourceId:sourceId??null,targetId:target.id,targetKind:target.kind,amount:value});
-    this.log(`${label}: лечение «${target.name}» на ${value} здоровья.`,'action',{type:'heal',targetId:target.id});
+    this.log(`${label}: лечение «${this.shown(target)}» на ${value} здоровья.`,'action',{type:'heal',targetId:target.id});
   }
   private harm(target:CombatantSnapshot,amount:number,label:string,options:{poison?:boolean,sourceId?:string,faceIndex?:number, strikeWord?:boolean}={}){
     if(!target.alive||amount<=0)return 0;
@@ -606,11 +821,18 @@ export class BattleSession {
     if(!options.poison && hasFoeTrait(def,'Прочность:')) damage=Math.min(1,damage);
     const absorbed=options.poison?0:Math.min(target.shield,damage);
     if(!options.poison)target.shield-=absorbed;
-    const applied=Math.min(target.hp,Math.max(0,damage-absorbed));
+    let applied=Math.min(target.hp,Math.max(0,damage-absorbed));
+    const immortal=this.immortalCharges.get(target.id)??0;
+    if(immortal>0&&applied>=target.hp&&target.hp>0){
+      applied=target.hp-1;
+      if(immortal===1)this.immortalCharges.delete(target.id);
+      else this.immortalCharges.set(target.id,immortal-1);
+      this.log(`${target.name}: Бессмертие спасает от смертельного удара.`,'system');
+    }
     target.hp-=applied;
     if(target.hp===0){target.alive=false;target.effects=[];}
     this.telemetry?.({type:'damage',floor:this.floor,sourceId:options.sourceId??null,targetId:target.id,targetKind:target.kind,targetName:target.name,label,attempted:amount,applied,shieldAbsorbed:absorbed,damageType:options.poison?'poison':'strike',dodged:false,killed:!target.alive});
-    this.log(`${label} → «${target.name}»: ${applied} ${options.poison?'яда':'урона'}${absorbed?`, щит поглотил ${absorbed} (осталось ${target.shield})`:''}.`,'action',{type:'strike',targetId:target.id});
+    this.log(`${label} → «${this.shown(target)}»: ${applied} ${options.poison?'яда':'урона'}${absorbed?`, щит поглотил ${absorbed} (осталось ${target.shield})`:''}.`,'action',{type:'strike',targetId:target.id});
     if(applied>0 && target.kind==='boss' && target.name==='Лич' && !this.lichSummoned && target.hp<=target.maxHp/2){
       this.lichSummoned=true;
       for(const id of this.livingHeroes())this.summon(id,4,'Лич');
@@ -626,7 +848,7 @@ export class BattleSession {
     }
     if(!target.alive){
       this.petrifiedFaces.delete(target.id);this.decayedFaces.delete(target.id);this.grownFaces.delete(target.id);this.foeFaceChanges.delete(target.id);
-      this.log(`${target.name} погибает.`,'system');
+      this.log(`${this.shown(target)} погибает.`,'system');
       if(target.kind==='hero')this.transferMonsters(target.id);
       if(def?.name==='Гнилец')for(const id of this.livingHeroes()){
         const hero=this.actor(id)!;this.harm(hero,1,'Гнилец после смерти',{sourceId:target.id});
@@ -647,22 +869,39 @@ export class BattleSession {
   target(id:string,rawTargetId:unknown,name:string){
     this.assertActive(id);
     if(this.phase!=='target'||!this.pendingAction)throw new BattleError('Сначала выберите грань с действием.');
-    if(typeof rawTargetId!=='string'||!this.possibleTargets(id,this.pendingAction).includes(rawTargetId))throw new BattleError('Недопустимая цель для выбранного действия.');
+    const input=typeof rawTargetId==='string'?{targetId:rawTargetId}:rawTargetId && typeof rawTargetId==='object'?rawTargetId as {targetId?:unknown;scatterIds?:unknown;cleanseSelections?:unknown}:{};
+    if(typeof input.targetId!=='string'||!this.possibleTargets(id,this.pendingAction).includes(input.targetId))throw new BattleError('Недопустимая цель для выбранного действия.');
     const pending=this.pendingAction;
-    const target=this.actor(rawTargetId)!;
+    const target=this.actor(input.targetId)!;
     if(pending.kind==='strike'||pending.kind==='heal'||pending.kind==='shield'){
       const targets=[target];
       const parts=pending.label.split(',').map(x=>x.trim().toLocaleLowerCase('ru-RU'));
       if(parts.includes('разброс')){
-        if(target.kind==='hero')for(const adjacent of this.neighbors(target.id)){
-          const actor=this.actor(adjacent);if(actor?.alive)targets.push(actor);
+        const allowed=this.scatterCandidates(target.id);
+        const count=Math.min(2,allowed.length);
+        if(!Array.isArray(input.scatterIds)||input.scatterIds.length!==count
+           ||new Set(input.scatterIds).size!==count ||input.scatterIds.some(x=>typeof x!=='string'||!allowed.includes(x)))
+          throw new BattleError(`Выберите ${count} соседних целей для Разброса.`);
+        targets.push(...input.scatterIds.map(x=>this.actor(x as string)!));
+      }
+      // Validate ALL cleansing choices before mutating anyone.
+      if(parts.includes('очищение')){
+        const selected=input.cleanseSelections;
+        for(const victim of targets){
+          const need=Math.min(pending.value,this.cleanseable(victim).reduce((n,e)=>n+e.amount,0));
+          if(!need)continue;
+          const values=(selected && typeof selected==='object' && !Array.isArray(selected))
+            ? (selected as Record<string,unknown>)[victim.id]:undefined;
+          if(!values||typeof values!=='object'||Array.isArray(values))throw new BattleError('Выберите эффекты для очищения.');
+          const allocation=values as Record<string,unknown>;
+          let sum=0;
+          for(const [kind,value] of Object.entries(allocation)){
+            const effect=this.cleanseable(victim).find(e=>e.kind===kind);
+            if(!effect||!Number.isInteger(value)||Number(value)<0||Number(value)>effect.amount)throw new BattleError('Неверное распределение очищения.');
+            sum+=Number(value);
+          }
+          if(sum!==need)throw new BattleError(`Распределите ${need} единиц очищения для «${victim.name}».`);
         }
-        else if(target.kind==='monster'){
-          const others=this.livingEnemies().filter(c=>c.kind==='monster'&&c.id!==target.id);
-          const same=others.filter(c=>c.ownerId===target.ownerId);
-          const other=others.filter(c=>c.ownerId!==target.ownerId);
-          targets.push(...[...same,...other].slice(0,2));
-        }else if(target.kind==='boss')targets.push(...this.livingEnemies().filter(c=>c.kind==='monster').slice(0,2));
       }
       for(const victim of new Map(targets.map(t=>[t.id,t])).values()){
         if(!victim.alive)continue;
@@ -676,19 +915,16 @@ export class BattleSession {
           if(parts.includes('яд'))this.addStatus(victim,'poison',pending.value,id);
           if(parts.includes('слабость'))this.addStatus(victim,'weakness',pending.value,id);
           if(parts.includes('очищение')){
-            let left=pending.value;
-            for(const kind of ['poison','weakness','sleep','paralysis','stun','decay'] as const){
-              if(left<=0)break;
-              if(statusValue(victim,kind)>0){clearEffect(victim,kind);left--;}
-            }
-            this.log(`${name}: очищение «${victim.name}» (до ${pending.value} эффектов).`,'action');
+            const chosen=(input.cleanseSelections as Record<string,Record<string,number>>|undefined)?.[victim.id];
+            this.cleanseSelected(victim,pending.value,chosen,name);
           }
-          if(parts.includes('мана')&&victim.kind==='hero')victim.mana+=pending.value;
+          // Mana always belongs to the owner of the face, not its target.
           if(parts.includes('щит')&&pending.kind!=='shield'){victim.shield+=pending.value;}
           if(parts.includes('лечение')&&pending.kind!=='heal')this.heal(victim,pending.value,name,id);
         }
       }
       const self=this.actor(id)!;
+      if(parts.includes('мана')){self.mana+=pending.value;this.log(`${name}: +${pending.value} маны (сейчас ${self.mana}).`,'action',{type:'mana',targetId:id});}
       if(parts.includes('самощит'))self.shield+=pending.value;
       if(parts.includes('самолечение'))this.heal(self,pending.value,name,id);
       if(parts.includes('самоуворот'))this.addStatus(self,'dodge',pending.value,id);
@@ -739,9 +975,10 @@ export class BattleSession {
     // Weakness reduces the creature's CURRENT face before this action; it expires
     // after its own turn, not before the attack. This applies to both monsters and bosses.
     const faceValue=Math.max(0,words.amount+(this.foeFaceChanges.get(enemy.id)??0)-statusValue(enemy,'weakness'));
-    let damage=faceValue;
+    const power=faceValue+(hasFoeTrait(def,'Пиявка:')?target.maxHp-target.hp:0);
+    // Leech raises the value of the WHOLE face, not only the Strike word.
+    let damage=power;
     if(words.dying&&enemy.hp<enemy.maxHp/2)damage*=2;
-    if(hasFoeTrait(def,'Пиявка:'))damage+=target.maxHp-target.hp;
     const victimIds=words.allHeroes?this.livingHeroes():[target.id];
     const fullTargets=new Set(victimIds);
     if(words.scatter){
@@ -752,8 +989,8 @@ export class BattleSession {
       if(!victim?.alive)continue;
       this.harm(victim,damage,enemy.name,{sourceId:enemy.id,strikeWord:true});
       if(!victim.alive)continue;
-      if(words.poison)this.addStatus(victim,'poison',faceValue,enemy.id);
-      if(words.weakness)this.addStatus(victim,'weakness',faceValue,enemy.id);
+      if(words.poison)this.addStatus(victim,'poison',power,enemy.id);
+      if(words.weakness)this.addStatus(victim,'weakness',power,enemy.id);
       if(words.sleep)this.addStatus(victim,'sleep',1,enemy.id);
       if(words.paralysis)this.addStatus(victim,'paralysis',1,enemy.id);
     }
@@ -764,8 +1001,8 @@ export class BattleSession {
       this.foeFaceChanges.set(enemy.id,next);
       this.log(`${enemy.name}: ${words.growth?'Рост':'Гниение'} изменяет собственную грань после действия (${before} → ${Math.max(0,words.amount+next)}).`,'system');
     }
-    if(words.selfHeal)this.heal(enemy,faceValue,enemy.name,enemy.id);
-    if(words.pain && enemy.alive)this.harm(enemy,faceValue,`${enemy.name} · Боль`,{sourceId:enemy.id});
+    if(words.selfHeal)this.heal(enemy,power,enemy.name,enemy.id);
+    if(words.pain && enemy.alive)this.harm(enemy,power,`${enemy.name} · Боль`,{sourceId:enemy.id});
     if(def.name==='Миазм' && enemy.alive)this.harm(enemy,enemy.hp,'Миазм · Смерть',{sourceId:enemy.id});
     if(def.name==='Чумной доктор')for(const c of this.livingEnemies())this.heal(c,faceValue,def.name,enemy.id);
   }
@@ -807,7 +1044,7 @@ export class BattleSession {
     const chosen=weakest?[...candidates].sort((a,b)=>this.actor(a)!.hp-this.actor(b)!.hp)[0]!
       :strongest?[...candidates].sort((a,b)=>this.actor(b)!.hp-this.actor(a)!.hp)[0]!
       :candidates[this.pickIndex(candidates.length)]!;
-    this.log(`Цель босса «${boss.name}»: ${this.actor(chosen)?.name ?? chosen}.`,'turn',{type:'turn',targetId:chosen});
+    this.log(`Цель босса «${boss.name}»: ${this.actor(chosen)?this.shown(this.actor(chosen)!):chosen}.`,'turn',{type:'turn',targetId:chosen});
     this.attackByEnemy(boss,this.actor(chosen)!);
     if(boss.alive && boss.name==='Прокаженный'){
       for(const id of this.livingHeroes()){
@@ -841,7 +1078,20 @@ export class BattleSession {
         this.log(`${source.name}: «${decay?'Гниение':'Рост'}» меняет грань ${idx+1} после применения (${before} → ${after}).`,'system');
       }
     }
+    // A resolved cube action does not consume the chance to cast afterwards.
+    // In a legacy turn with no mana/spells, enemies act immediately as before.
+    if(resetMisses && this.pendingAction && source?.alive && this.hasSpellOpportunity(id)){
+      this.pendingAction=null;
+      if(this.checkTerminal())return;
+      this.phase='spell';
+      return;
+    }
+    if(source && source.alive && this.healingFaces.has(id))this.heal(source,this.healingFaces.get(id)!,'Самолечение каждой грани',id);
+    this.healingFaces.delete(id);this.immortalCharges.delete(id);
     if(source && source.alive)this.applyEndOfTurn(source);
+    this.spelllessLastTurn.set(id,(this.spellCasts.get(id)??0)===0);
+    this.spellCasts.delete(id);this.spellUses.delete(id);this.reactiveStrikes.delete(id);
+    this.spellStrength.delete(id);
     if(source && source.mana>source.maxMana){
       const overflow=source.mana-source.maxMana;source.mana=source.maxMana;
       this.log(`Избыточная мана (${overflow}) сброшена в конце хода.`,'system');
@@ -853,7 +1103,7 @@ export class BattleSession {
     this.pendingBossAction=false;this.pendingNextTurn=false;this.deadlineAt=this.now()+this.enemyPauseMs;
   }
   pass(id:string,name:string){
-    this.assertActive(id);this.log(`${name} завершает ход без действия.`,'system');this.completeAction(id);
+    this.assertActive(id);this.log(`${name} ${this.phase==='spell'||(this.spellCasts.get(id)??0)>0?'завершает ход':'пропускает ход'}.`,'system');this.completeAction(id);
   }
   continueFloor(){
     if(this.phase!=='rest')throw new BattleError('Следующий этаж пока недоступен.');
@@ -879,6 +1129,11 @@ export class BattleSession {
     }
     if(this.phase==='enemy'){
       if(this.deadlineAt===null||this.now()<this.deadlineAt)return [];
+      if(this.pendingExtraTurn){
+        this.pendingExtraTurn=false;
+        this.prepareTurn();
+        return [];
+      }
       if(this.pendingNextTurn){
         this.pendingNextTurn=false;
         this.selectNextLivingPlayer();
@@ -905,7 +1160,7 @@ export class BattleSession {
       if(!this.checkTerminal())this.advanceTurn();
       return [];
     }
-    if(!['roll','choose','target'].includes(this.phase)||this.deadlineAt===null||this.now()<this.deadlineAt)return [];
+    if(!['roll','choose','target','spell'].includes(this.phase)||this.deadlineAt===null||this.now()<this.deadlineAt)return [];
     const active=this.activePlayer();if(!active)return [];
     const online=isConnected(active);
     const misses=online?(this.consecutiveMisses.get(active)??0)+1:(this.consecutiveMisses.get(active)??0);
@@ -923,6 +1178,7 @@ export class BattleSession {
     const idx=this.playerIds.indexOf(id);if(idx===-1)return;
     const wasActive=idx===this.activeIndex;
     this.combatants.delete(id);this.petrifiedFaces.delete(id);this.decayedFaces.delete(id);this.grownFaces.delete(id);
+    this.spellUses.delete(id);this.spellCasts.delete(id);this.spelllessLastTurn.delete(id);this.reactiveStrikes.delete(id);this.nextManaBonus.delete(id);this.healingFaces.delete(id);this.immortalCharges.delete(id);this.remainingExtraTurns.delete(id);
     this.inventories.delete(id);this.artifactFaces.delete(id);this.faceBonuses.delete(id);this.faceDoubles.delete(id);this.allFaceBonuses.delete(id);
     this.rewardQueue=this.rewardQueue.filter(x=>x!==id);
     this.campPending.delete(id);this.campRolls.delete(id);
@@ -967,6 +1223,14 @@ export class BattleSession {
   }
   private advanceTurn(){
     if(!this.playerIds.length)return;
+    const id=this.activePlayer();
+    const additional=id?(this.remainingExtraTurns.get(id)??0):0;
+    if(id&&additional>0&&this.actor(id)?.alive){
+      if(additional===1)this.remainingExtraTurns.delete(id);
+      else this.remainingExtraTurns.set(id,additional-1);
+      this.pendingExtraTurn=true;this.phase='enemy';this.deadlineAt=this.now()+this.enemyPauseMs;
+      this.log(`${this.actor(id)!.name}: дополнительный ход по заклинанию.`,'turn');return;
+    }
     // At the round boundary the boss also gets its own 2-second interval.
     let next=(this.activeIndex+1)%this.playerIds.length;
     let inspected=0;
@@ -980,6 +1244,7 @@ export class BattleSession {
   }
   private prepareTurn(first=false){
     this.phase='roll';this.dice=null;this.pendingAction=null;
+    const previous=this.activePlayer();if(previous){this.spellUses.delete(previous);this.spellCasts.delete(previous);this.reactiveStrikes.delete(previous);}
     const active=this.activePlayer();
     if(!active||!this.actor(active)?.alive){this.phase='paused';this.deadlineAt=null;return;}
     const hero=this.actor(active)!;
@@ -997,6 +1262,8 @@ export class BattleSession {
     const missed=this.consecutiveMisses.get(active)??0;
     const ms=missed>0||this.absent.has(active)?this.durations.shortMs:this.durations.normalMs;
     this.deadlineAt=this.now()+ms;
+    const savedMana=this.nextManaBonus.get(active)??0;
+    if(savedMana){hero.mana+=savedMana;this.nextManaBonus.delete(active);this.log(`${hero.name}: получает ${savedMana} маны от заклинания прошлого хода.`,'action');}
     this.log(first?'Первый ход этажа: бросьте два кубика.':`Следующий ход (${ms/1000} сек.).`,'turn',{type:'turn',targetId:active});
   }
 }

@@ -1080,3 +1080,33 @@
 @media(max-width:680px) {
   .table-monster-card .battle-monster-face {font-size: 8px;max-width: 65px;padding: 1px 3px}
 }
+
+/* Long names wrap to two lines inside the token. */
+.table-monster-card strong{display:block;white-space:normal;overflow-wrap:anywhere;word-break:normal;max-width:100%;width:100%;line-height:1.25;text-align:center}
+
+/* Target confirmation for Scatter and strength-based Cleanse */
+.battle-target-setup{border:1px solid #82745b;border-radius:10px;padding:12px;display:grid;gap:9px;background:#161e25}
+.battle-target-setup h3{margin:0;font-size:14px}.battle-target-setup p{margin:0;font-size:12px}
+.battle-target-options{display:flex;flex-wrap:wrap;gap:7px;align-items:center}
+.battle-target-options>strong{width:100%;font-size:12px}
+.battle-target-options button,.battle-target-confirm button{background:#27333d;border:1px solid #6c8192;border-radius:5px;padding:6px 10px;color:#ede1cb;cursor:pointer}
+.battle-target-options button.chosen,.battle-target-confirm button:last-child{border-color:#dabf80;background:#564833}
+.battle-target-options button:disabled,.battle-target-confirm button:disabled{opacity:.4;cursor:not-allowed}
+.battle-cleanse-row{display:flex;align-items:center;gap:9px;font-size:12px;width:100%}
+.battle-cleanse-row>span{flex:1}.battle-target-confirm{display:flex;justify-content:flex-end;gap:8px}
+
+/* Rear-rank enemy markers */
+.table-monster.behind .table-monster-card{border-color:#7d6b9b}
+.table-monster.behind .table-monster-card::before{content:'ПОЗАДИ';position:absolute;top:-13px;left:50%;transform:translateX(-50%);font:8px var(--pixel);color:#d1bbec;white-space:nowrap}
+
+/* Stage 3.4.4 — spells: controls remain in the existing dark fantasy side panel. */
+.battle-spells{margin:14px 0 8px;padding:10px;border:1px solid #826a4680;background:#101920d9;border-radius:10px;display:grid;gap:7px}
+.battle-spells .battle-section-heading{margin:0 0 3px}
+.battle-spell-entry{display:flex;align-items:center;gap:7px;border-top:1px solid #6e645246;padding:8px 0 2px}
+.battle-spell-description{display:flex;flex-direction:column;gap:3px;flex:1;min-width:0}
+.battle-spell-description strong{font-size:12px;color:#eddaab;overflow-wrap:anywhere}
+.battle-spell-description small{font-size:10px;color:#b2bbbc;line-height:1.35}
+.battle-spell-entry button{flex-shrink:0;min-height:33px;padding:5px 8px;border:1px solid #a98b55;border-radius:6px;background:#3a3228;color:#ffe6b5;font-weight:700;font-size:11px;cursor:pointer}
+.battle-spell-entry button.selected{background:#6b4a2c;outline:2px solid #ecd4a0}
+.battle-spell-entry button:disabled{opacity:.4;cursor:not-allowed}
+@media(max-width:600px){.battle-spell-entry{flex-wrap:wrap}.battle-spell-description{flex-basis:100%}}

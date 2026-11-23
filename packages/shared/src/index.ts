@@ -66,13 +66,23 @@ export type StatusEffect = {
   amount: number;
   sourceId?: string;
 };
+/** A spell is an explicitly selected server-side action, not a dice face. */
+export type SpellChoice = {
+  id: string;
+  artifactId: string | null;
+  title: string;
+  description: string;
+  cost: number;
+  targets: string[];
+  available: boolean;
+};
 export type ArtifactCard = {
   id: string;
   title: string;
   description: string;
   tier: number;
   group: string;
-  kind: 'face' | 'hp' | 'maxhp' | 'consumable' | 'buffall' | 'doubleface';
+  kind: 'face' | 'hp' | 'maxhp' | 'consumable' | 'buffall' | 'doubleface' | 'spell' | 'spellpassive';
   face?: DiceFace;
   amount?: number;
 };
@@ -87,7 +97,7 @@ export type BattleSnapshot = {
   floor: number;
   round: number;
   activePlayerId: string | null;
-  phase: 'roll' | 'choose' | 'target' | 'enemy' | 'rest' | 'paused' | 'finished';
+  phase: 'roll' | 'choose' | 'target' | 'spell' | 'enemy' | 'rest' | 'paused' | 'finished';
   deadlineAt: number | null;
   serverTime: number;
   rolls: [number, number] | null;
@@ -100,7 +110,10 @@ export type BattleSnapshot = {
   rewardDraft?: RewardDraft | null;
   campRest?: CampRest | null;
   inventories?: Record<string, ArtifactItem[]>;
+  spells?: Record<string,SpellChoice[]>;
+  spellFree?: Record<string,boolean>;
   pendingAction: PendingAction | null;
   availableTargetIds: string[];
+  scatterCandidates?: Record<string,string[]>;
   result: null | { reason: 'six_floors' | 'last_survivor' | 'party_wiped'; winnerIds: string[] };
 };

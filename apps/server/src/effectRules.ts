@@ -41,6 +41,9 @@ export function statusValue(entity: CombatantSnapshot, kind: StatusEffect['kind'
 export function addEffect(entity: CombatantSnapshot, kind: StatusEffect['kind'], amount: number, sourceId?:string) {
   if (amount <= 0) return;
   entity.effects ??= [];
+  // Binary states do not stack a numeric strength: they are either present or absent.
+  const binary = kind === 'stun' || kind === 'sleep' || kind === 'paralysis' || kind === 'petrified';
+  if (binary) amount = 1;
   // Poison and regeneration mutually cancel at application time. Preserve only
   // the remainder, so clients never display both as simultaneously active.
   if(kind==='poison'||kind==='regeneration'){
@@ -55,7 +58,7 @@ export function addEffect(entity: CombatantSnapshot, kind: StatusEffect['kind'],
     }
   }
   const previous = entity.effects.find(e => e.kind === kind);
-  if (previous) previous.amount += amount;
+  if (previous) previous.amount = binary ? 1 : previous.amount + amount;
   else entity.effects.push({kind,amount,...(sourceId?{sourceId}:{})});
 }
 export function clearEffect(entity: CombatantSnapshot, kind: StatusEffect['kind']) {
