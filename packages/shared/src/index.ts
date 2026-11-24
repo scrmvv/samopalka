@@ -26,6 +26,7 @@ export type RoomSnapshot = {
   players: PlayerPublic[];
   updatedAt: number;
   game?: BattleSnapshot;
+  heroHp?: Record<string,number>;
   debug?: {
     foes: { id:string; name:string; floor:number; hp:number; boss:boolean }[];
     artifacts: { id:string; title:string; description:string; tier:number; group:string; kind:ArtifactCard['kind'] }[];

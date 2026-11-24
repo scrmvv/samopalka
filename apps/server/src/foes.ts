@@ -3,7 +3,7 @@
  * The legacy baseDamage/simulated fields are retained for compatibility with
  * earlier data; stage 3.3 uses the printed description through effectRules.ts.
  */
-export type FoeDefinition = {id:string;name:string;hp:number;floor:number;boss:boolean;count:number;baseDamage:number;allHeroes:boolean;simulated:boolean;description:string};
+export type FoeDefinition = {id:string;name:string;hp:number;floor:number;boss:boolean;count:number;baseDamage:number;allHeroes:boolean;simulated:boolean;description:string;abilities?:Partial<Record<'armor'|'dodge'|'sturdy'|'leech'|'plague'|'deathStrike'|'growth'|'decay'|'dying',number>>};
 export const FOES: readonly FoeDefinition[] = [
   {
     "id": "foe_1",

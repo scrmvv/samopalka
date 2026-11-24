@@ -1,9 +1,8 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { HEROES, type HeroId, type PlayerPublic, type RoomSnapshot, type RoomStatus } from '@samopalka/shared';
 import { BattleSession, BattleError } from './battle.js';
-import { FOES } from './foes.js';
-import { ARTIFACTS } from './artifacts.js';
-import { SPELL_ARTIFACT_CARDS, SPELL_PASSIVE_CARDS } from './spells.js';
+import { defaultBalance, effectiveFoes, type Balance } from './balance.js';
+import { effectiveArtifacts } from './balanceContent.js';
 
 const CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const RECONNECT_MS = 60_000;
@@ -34,7 +33,7 @@ export class RoomError extends Error {}
 export class RoomManager {
   private rooms = new Map<string, Room>();
   private sockets = new Map<string, { code: string; id: string }>();
-  constructor(private readonly notify: (code: string) => void = () => {}, private readonly clock: () => number = Date.now, private readonly onKick?: (socketId: string, reason: string) => void, private readonly debugEnabled = false) {}
+  constructor(private readonly notify: (code: string) => void = () => {}, private readonly clock: () => number = Date.now, private readonly onKick?: (socketId: string, reason: string) => void, private readonly debugEnabled = false, private readonly getBalance:()=>Balance=defaultBalance) {}
 
   private code(): string {
     for (let tries = 0; tries < 100; tries++) {
@@ -83,6 +82,8 @@ export class RoomManager {
     if (room.hostId !== player.id) throw new RoomError('Это действие доступно только хосту.');
   }
 
+  refreshLobbyBalance(){for(const room of this.rooms.values())if(room.status==='lobby')this.touch(room);}
+
   private touch(room: Room) {
     room.updatedAt = this.clock();
     this.notify(room.code);
@@ -91,13 +92,15 @@ export class RoomManager {
   snapshot(code: string): RoomSnapshot | null {
     const r = this.rooms.get(code.toUpperCase());
     if (!r) return null;
+    const balance=this.getBalance();
     return {
+      heroHp:r.game?.heroBalance()??Object.fromEntries(Object.entries(balance.heroes).map(([id,h])=>[id,h.hp])),
       code: r.code, name: r.name, maxPlayers: r.maxPlayers, status: r.status,
       campaign: 'Путь проклятых', updatedAt: r.updatedAt,
       ...(r.game ? { game: r.game.snapshot() } : {}),
       ...(this.debugEnabled ? {debug: {
-        foes: FOES.map(f=>({id:f.id,name:f.name,floor:f.floor,hp:f.hp,boss:f.boss})),
-        artifacts: [...ARTIFACTS,...SPELL_ARTIFACT_CARDS,...SPELL_PASSIVE_CARDS].map(a=>({id:a.id,title:a.title,description:a.description,tier:a.tier,group:a.group,kind:a.kind}))
+        foes: r.game?.debugFoes()??effectiveFoes(balance).map(f=>({id:f.id,name:f.name,floor:f.floor,hp:f.hp,boss:f.boss})),
+        artifacts: (r.game?.debugArtifacts()??effectiveArtifacts(balance)).map(a=>({id:a.id,title:a.title,description:a.description,tier:a.tier,group:a.group,kind:a.kind}))
       }} : {}),
       players: r.players.map((p): PlayerPublic => ({
         id: p.id, nickname: p.nickname, heroId: p.heroId,
@@ -217,7 +220,7 @@ export class RoomManager {
       throw new RoomError('Все игроки должны выбрать героя, быть в сети и нажать «Готов».');
     }
     room.status = 'started';
-    room.game = new BattleSession(room.players.map(p => ({ id: p.id, heroId: p.heroId!, nickname:p.nickname })), this.clock);
+    room.game = new BattleSession(room.players.map(p => ({ id: p.id, heroId: p.heroId!, nickname:p.nickname })), this.clock, undefined, undefined, undefined, this.getBalance());
     this.touch(room);
     return room.code;
   }

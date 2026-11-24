@@ -5,9 +5,14 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Server, type Socket } from 'socket.io';
+import { BalanceStore } from './balance.js';
+import { adminRoutes } from './adminRoutes.js';
 import { RoomError, RoomManager } from './rooms.js';
 import { isDebugToolsEnabled } from './debugConfig.js';
 import type { Ack } from '@samopalka/shared';
+import { loadProjectEnv } from './env.js';
+
+loadProjectEnv();
 
 const PORT = Number(process.env.PORT || 3000);
 const DEBUG_TOOLS = isDebugToolsEnabled(process.env.DEBUG_TOOLS);
@@ -16,6 +21,7 @@ const app = express();
 app.disable('x-powered-by');
 const httpServer = createServer(app);
 const io = new Server(httpServer, { transports: ['polling', 'websocket'], maxHttpBufferSize: 16_384 });
+const balanceStore = new BalanceStore(path.resolve(process.env.BALANCE_FILE || path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../data/balance.json')));
 const manager = new RoomManager(code => {
   const room = manager.snapshot(code);
   if (room) io.to(code).emit('room:state', room);
@@ -23,9 +29,10 @@ const manager = new RoomManager(code => {
 }, Date.now, (socketId, reason) => {
   const socket = io.sockets.sockets.get(socketId);
   if (socket) { socket.emit('room:kicked', reason); setTimeout(() => socket.disconnect(true), 150).unref(); }
-}, DEBUG_TOOLS);
+}, DEBUG_TOOLS, () => balanceStore.snapshot());
+app.use('/api/admin', adminRoutes(balanceStore,process.env.ADMIN_PASSWORD??'',process.env.ADMIN_ALLOW_HTTP==='1',()=>manager.refreshLobbyBalance()));
 
-app.get('/api/health', (_, res) => res.json({ ok: true, name: 'Самопалка', stage: '3.4.4-test' }));
+app.get('/api/health', (_, res) => res.json({ ok: true, name: 'Самопалка', stage: '4.3-4.4-test' }));
 app.get('/api/network', (_, res) => {
   const interfaces = Object.values(networkInterfaces()).flatMap(items => items ?? []);
   const addresses = [...new Set(interfaces.filter(ip => ip.family === 'IPv4' && !ip.internal).map(ip => ip.address))];

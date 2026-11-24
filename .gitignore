@@ -24,3 +24,6 @@ Thumbs.db
 simulator-report.json
 reports/
 *.traces.json
+
+# Server-owned balance data and backups (never commit production balance)
+/data/

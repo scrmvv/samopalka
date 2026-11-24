@@ -7,7 +7,7 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
     "dev": "tsx watch src/index.ts",
-    "test": "tsx --test test/rooms.test.ts test/battle.test.ts test/boardLayout.test.ts test/effects.test.ts test/debug.test.ts test/debugConfig.test.ts test/simulator.test.ts test/stage334.test.ts test/boardLayout3341.test.ts test/artifacts34.test.ts test/stage341.test.ts test/stage342.test.ts test/stage343.test.ts test/customer-feedback.test.ts test/stage344.test.ts",
+    "test": "tsx --test test/rooms.test.ts test/battle.test.ts test/boardLayout.test.ts test/effects.test.ts test/debug.test.ts test/debugConfig.test.ts test/simulator.test.ts test/stage334.test.ts test/boardLayout3341.test.ts test/artifacts34.test.ts test/stage341.test.ts test/stage342.test.ts test/stage343.test.ts test/customer-feedback.test.ts test/stage344.test.ts test/stage412.test.ts test/admin-http.test.ts test/env.test.ts test/stage4344.test.ts",
     "simulate": "tsx simulator/cli.ts"
   },
   "dependencies": {

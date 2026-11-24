@@ -1,9 +1,10 @@
 import { randomInt } from 'node:crypto';
 import type { CombatTelemetryListener } from './combatTelemetry.js';
-import { HEROES, HERO_DICE, type BattleSnapshot, type BattleEvent, type HeroId, type CombatantSnapshot, type PendingAction, type BattleVisual, type DiceFace, type ArtifactCard, type ArtifactItem, type RewardDraft } from '@samopalka/shared';
-import { FOES, type FoeDefinition } from './foes.js';
-import { ARTIFACTS } from './artifacts.js';
-import { HERO_SPELLS, ARTIFACT_SPELLS, SPELL_ARTIFACT_CARDS, SPELL_PASSIVE_CARDS, type SpellDefinition, type SpellPart } from './spells.js';
+import { HEROES, type BattleSnapshot, type BattleEvent, type HeroId, type CombatantSnapshot, type PendingAction, type BattleVisual, type DiceFace, type ArtifactCard, type ArtifactItem, type RewardDraft } from '@samopalka/shared';
+import { type FoeDefinition } from './foes.js';
+import { defaultBalance, effectiveFoes, heroFaces, type Balance } from './balance.js';
+import { effectiveArtifacts, effectiveSpells, type BalancedSpell } from './balanceContent.js';
+import type { SpellDefinition, SpellPart } from './spells.js';
 import { printedFoeAction, statusValue, addEffect, clearEffect, consumeEffect, armorFor, hasFoeTrait } from './effectRules.js';
 
 export class BattleError extends Error {}
@@ -24,6 +25,15 @@ export function turnDurations(env: Record<string, string | undefined> = process.
  */
 export class BattleSession {
   private playerIds: string[];
+  private readonly balance:Balance;
+  private readonly foes:FoeDefinition[];
+  private readonly artifacts:ArtifactCard[];
+  private readonly spells:BalancedSpell[];
+  debugArtifacts(){return structuredClone(this.artifacts);}
+  private effect(id:string,key:string){return this.balance.effects[id]![key]!;}
+  private passiveAmount(id:string){return this.balance.artifacts[id]!.amount!;}
+  heroBalance(){return Object.fromEntries(Object.entries(this.balance.heroes).map(([id,h])=>[id,h.hp]));}
+  debugFoes(){return this.foes.map(f=>({id:f.id,name:f.name,floor:f.floor,hp:f.hp,boss:f.boss}));}
   private readonly originalPlayerCount: number;
   private heroes: Map<string, HeroId>;
   private nicknames = new Map<string,string>();
@@ -58,7 +68,7 @@ export class BattleSession {
   private foeFaceChanges = new Map<string,number>();
   private artifactFaces = new Map<string,DiceFace[]>();
   private faceBonuses = new Map<string,Map<number,number>>();
-  private faceDoubles = new Map<string,Set<number>>();
+  private faceDoubles = new Map<string,Map<number,number>>();
   private allFaceBonuses = new Map<string,number>();
   private inventories = new Map<string,ArtifactItem[]>();
   private artifactSerial = 0;
@@ -90,8 +100,13 @@ export class BattleSession {
     private readonly now: () => number = Date.now,
     private readonly die: () => number = () => randomInt(1, 7),
     private readonly pickIndex: (length: number) => number = length => randomInt(0, length),
-    private readonly telemetry?: CombatTelemetryListener
+    private readonly telemetry?: CombatTelemetryListener,
+    balance:Balance=defaultBalance()
   ) {
+    this.balance=structuredClone(balance);
+    this.foes=effectiveFoes(this.balance);
+    this.spells=effectiveSpells(this.balance);
+    this.artifacts=effectiveArtifacts(this.balance,this.spells);
     this.playerIds = players.map(p => p.id);
     this.originalPlayerCount = players.length;
     this.heroes = new Map(players.map(p => [p.id,p.heroId]));
@@ -101,7 +116,7 @@ export class BattleSession {
       if (!hero) throw new BattleError('Неизвестный герой.');
       this.combatants.set(player.id, {
         id:player.id, kind:'hero', ownerId:player.id, name:hero.name,
-        hp:hero.hp,maxHp:hero.hp,shield:0,mana:0,maxMana:3,alive:true,effects:[]
+        hp:this.balance.heroes[hero.id]!.hp,maxHp:this.balance.heroes[hero.id]!.hp,shield:0,mana:0,maxMana:this.balance.heroes[hero.id]!.maxMana,alive:true,effects:[]
       });
     }
     for(const id of this.playerIds)this.inventories.set(id,[]);
@@ -134,13 +149,13 @@ export class BattleSession {
     const foe:CombatantSnapshot={id,kind:'monster',ownerId,name:def.name,hp:def.hp,maxHp:def.hp,shield:0,mana:0,maxMana:0,alive:true,effects:[]};
     this.combatants.set(id,foe);
     if(def.name==='Тень' || hasFoeTrait(def,'Перед выходом: СамоУворот')) {
-      addEffect(foe,'dodge',1);
-      this.log(`${def.name}: уворот 1 при появлении.`, 'system',{type:'shield',targetId:id});
+      addEffect(foe,'dodge',def.abilities?.dodge??1);
+      this.log(`${def.name}: уворот ${def.abilities?.dodge??1} при появлении.`, 'system',{type:'shield',targetId:id});
     }
   }
   private summon(ownerId:string, tier:number, label:string, depth=0){
     if(depth>1 || this.combatants.size>42) return;
-    const pool=FOES.filter(f=>f.floor===tier&&!f.boss).flatMap(f=>Array.from({length:f.count},()=>f));
+    const pool=this.foes.filter(f=>f.floor===tier&&!f.boss).flatMap(f=>Array.from({length:f.count},()=>f));
     if(!pool.length) return;
     const def=this.drawFoe(pool);
     const id=`monster:${this.floor}:${ownerId}:summon:${++this.summonSerial}`;
@@ -155,8 +170,8 @@ export class BattleSession {
     this.lichSummoned=false;
     this.foeFaceChanges.clear();
     this.pendingMonsterQueue=null;this.pendingBossAction=false;this.pendingNextTurn=false;
-    const deck=FOES.filter(f=>f.floor===this.floor&&!f.boss).flatMap(f=>Array.from({length:f.count},()=>f));
-    const bosses=FOES.filter(f=>f.floor===this.floor&&f.boss);
+    const deck=this.foes.filter(f=>f.floor===this.floor&&!f.boss).flatMap(f=>Array.from({length:f.count},()=>f));
+    const bosses=this.foes.filter(f=>f.floor===this.floor&&f.boss);
     const onEntry:{owner:string;def:FoeDefinition}[]=[];
     for(const ownerId of this.playerIds){
       const def=this.drawFoe(deck);
@@ -255,7 +270,7 @@ export class BattleSession {
   private faceFor(id:string,faceIndex:number):DiceFace{
     const heroId=this.heroes.get(id);
     if(!heroId)throw new BattleError('Неизвестный герой.');
-    const base=(this.artifactFaces.get(id) ?? HERO_DICE[heroId])[faceIndex];
+    const base=(this.artifactFaces.get(id) ?? heroFaces(this.balance,heroId))[faceIndex];
     if(!base)throw new BattleError('У героя нет такой грани.');
     if(this.petrifiedFaces.get(id)?.has(faceIndex))return {kind:'empty',value:0,label:'Окаменение · Пусто'};
     return {...base};
@@ -263,11 +278,11 @@ export class BattleSession {
   private computedFaces(id:string):DiceFace[]{
     return Array.from({length:6},(_,index)=>{
       const face=this.faceFor(id,index);
-      const weak=statusValue(this.actor(id)!, 'weakness');
+      const weak=statusValue(this.actor(id)!, 'weakness')*this.effect('weakness','factor');
       const decay=this.decayedFaces.get(id)?.get(index) ?? 0;
       const growth=this.grownFaces.get(id)?.get(index) ?? 0;
       const bonus=(this.faceBonuses.get(id)?.get(index)??0)+(this.allFaceBonuses.get(id)??0)+(this.spellStrength.get(id)??0);
-      const doubled=this.faceDoubles.get(id)?.has(index) ? 2 : 1;
+      const doubled=this.faceDoubles.get(id)?.get(index) ?? 1;
       const value=Math.max(0,(face.value+bonus)*doubled+growth-decay-weak);
       const delta=value-face.value;
       if(delta && face.kind!=='empty') {
@@ -365,7 +380,7 @@ export class BattleSession {
     this.campStartedRewards=true;
     this.rewardQueue=[...this.playerIds.slice(this.activeIndex),...this.playerIds.slice(0,this.activeIndex)];
     this.rewardChosen=[];
-    this.rewardDeck=ARTIFACTS.filter(a=>a.tier===this.floor).map(a=>({...a,face:a.face?{...a.face}:undefined}));
+    this.rewardDeck=this.artifacts.filter(a=>a.tier===this.floor&&a.kind!=='spell'&&a.kind!=='spellpassive').map(a=>({...a,face:a.face?{...a.face}:undefined}));
     this.rewardOffers=[];
     this.refillOffers();
     this.deadlineAt=this.rewardQueue.length?this.now()+this.rewardDurationMs:null;
@@ -416,7 +431,7 @@ export class BattleSession {
     const owned=this.inventories.get(playerId)??[];
     owned.push(item);this.inventories.set(playerId,owned);
     if(card.kind==='face'){
-      const faces=[...(this.artifactFaces.get(playerId)??HERO_DICE[this.heroes.get(playerId)!])];
+      const faces=[...(this.artifactFaces.get(playerId)??heroFaces(this.balance,this.heroes.get(playerId)!))];
       faces[idx]={...card.face!};this.artifactFaces.set(playerId,faces);
       this.decayedFaces.get(playerId)?.delete(idx);this.grownFaces.get(playerId)?.delete(idx);
     }else if(card.kind==='hp'){
@@ -430,8 +445,8 @@ export class BattleSession {
     }else if(card.kind==='buffall'){
       this.allFaceBonuses.set(playerId,(this.allFaceBonuses.get(playerId)??0)+(card.amount??1));
     }else if(card.kind==='doubleface'){
-      const doubled=this.faceDoubles.get(playerId)??new Set<number>();
-      doubled.add(idx);this.faceDoubles.set(playerId,doubled);
+      const doubled=this.faceDoubles.get(playerId)??new Map<number,number>();
+      doubled.set(idx,card.amount??2);this.faceDoubles.set(playerId,doubled);
     }
     return item;
   }
@@ -443,7 +458,7 @@ export class BattleSession {
     const data=input as Record<string,unknown>;
     if(typeof data.playerId!=='string'||!this.heroes.has(data.playerId))throw new BattleError('Выберите героя.');
     if(typeof data.artifactId!=='string')throw new BattleError('Выберите артефакт.');
-    const card=[...ARTIFACTS,...SPELL_ARTIFACT_CARDS,...SPELL_PASSIVE_CARDS].find(a=>a.id===data.artifactId);
+    const card=this.artifacts.find(a=>a.id===data.artifactId);
     if(!card)throw new BattleError('Артефакт не найден в поддерживаемом каталоге.');
     const item=this.applyArtifact(data.playerId,card,data.faceIndex);
     const hero=this.actor(data.playerId)!;
@@ -456,12 +471,12 @@ export class BattleSession {
   private canCastFree(id:string):boolean {
     return this.passive(id,'spellpassive-278') || (this.passive(id,'spellpassive-346') && (this.spelllessLastTurn.get(id)??true) && (this.spellCasts.get(id)??0)===0);
   }
-  private definitions(id:string):SpellDefinition[] {
+  private definitions(id:string):BalancedSpell[] {
     const own=this.inventories.get(id)??[];
-    const native=this.heroes.get(id)==='adept'?HERO_SPELLS.filter(s=>s.id.startsWith('hero-adept-')):
-      this.heroes.get(id)==='healer'?HERO_SPELLS.filter(s=>s.id.startsWith('hero-healer-')):[];
+    const native=this.heroes.get(id)==='adept'?this.spells.filter(s=>s.id.startsWith('hero-adept-')):
+      this.heroes.get(id)==='healer'?this.spells.filter(s=>s.id.startsWith('hero-healer-')):[];
     const owned=new Set(own.filter(a=>a.kind==='spell'&&!a.spent).map(a=>a.id));
-    return [...native,...ARTIFACT_SPELLS.filter(s=>s.artifactId!==null&&owned.has(s.artifactId))];
+    return [...native,...this.spells.filter(s=>s.artifactId!==null&&owned.has(s.artifactId))];
   }
   private spellTargetIds(actorId:string,def:SpellDefinition):string[]{
     if(def.target==='none')return [];
@@ -477,9 +492,9 @@ export class BattleSession {
       ...(kind==='heal'?[actorId]:[])
     ])];
   }
-  private spellCost(id:string,def:SpellDefinition):number {
+  private spellCost(id:string,def:BalancedSpell):number {
     const times=this.spellUses.get(id)?.get(def.id)??0;
-    const reductions=(def.repeatCost?times:0)+(this.passive(id,'spellpassive-348')?(this.spellCasts.get(id)??0):0);
+    const reductions=(def.repeatCost?times*(def.repeatDiscount??1):0)+(this.passive(id,'spellpassive-348')?(this.spellCasts.get(id)??0)*this.passiveAmount('spellpassive-348'):0);
     return Math.max(1,def.cost-reductions);
   }
   private spellChoices(id:string){
@@ -493,8 +508,9 @@ export class BattleSession {
       return {id:def.id,artifactId:def.artifactId,title:def.title,description:def.description,cost,targets,available};
     });
     if(this.reactiveStrikes.has(id)){
-      const targets=this.possibleTargets(id,{kind:'strike',value:1,label:'Удар 1'});
-      choices.push({id:'spell-react-138',artifactId:'spellpassive-138',title:'Ответный удар 1',description:'Бесплатный удар после заклинания',cost:0,targets,available:current&&targets.length>0});
+      const strength=this.passiveAmount('spellpassive-138');
+      const targets=this.possibleTargets(id,{kind:'strike',value:strength,label:`Удар ${strength}`});
+      choices.push({id:'spell-react-138',artifactId:'spellpassive-138',title:`Ответный удар ${strength}`,description:'Бесплатный удар после заклинания',cost:0,targets,available:current&&targets.length>0});
     }
     return choices;
   }
@@ -525,7 +541,7 @@ export class BattleSession {
     this.assertActive(id);
     if(typeof spellId!=='string')throw new BattleError('Заклинание не найдено.');
     const reaction=spellId==='spell-react-138'&&this.reactiveStrikes.has(id);
-    const def=reaction?{id:'spell-react-138',artifactId:'spellpassive-138',title:'Ответный удар 1',description:'',cost:0,target:'one' as const,parts:[{word:'strike' as const,amount:1,group:'selected' as const}]}:
+    const def:BalancedSpell|undefined=reaction?{id:'spell-react-138',artifactId:'spellpassive-138',title:`Ответный удар ${this.passiveAmount('spellpassive-138')}`,description:'',cost:0,target:'one',parts:[{word:'strike',amount:this.passiveAmount('spellpassive-138'),group:'selected'}]}:
       this.definitions(id).find(s=>s.id===spellId);
     if(!def)throw new BattleError('Заклинание недоступно.');
     const count=this.spellUses.get(id)?.get(def.id)??0;
@@ -584,8 +600,8 @@ export class BattleSession {
       for(const owner of this.playerIds){
         const other=this.actor(owner);
         if(!other?.alive)continue;
-        if(this.passive(owner,'spellpassive-026'))this.heal(other,1,'Лечение за заклинания',owner);
-        if(this.passive(owner,'spellpassive-341'))other.shield+=3;
+        if(this.passive(owner,'spellpassive-026'))this.heal(other,this.passiveAmount('spellpassive-026'),'Лечение за заклинания',owner);
+        if(this.passive(owner,'spellpassive-341'))other.shield+=this.passiveAmount('spellpassive-341');
       }
       if(this.passive(id,'spellpassive-138'))this.reactiveStrikes.add(id);
     }
@@ -645,7 +661,7 @@ export class BattleSession {
     // No changing the active hero's dice after they have been rolled/selected.
     if(data.playerId===this.activePlayer()&&this.phase!=='roll')
       throw new BattleError('Менять грани активного героя можно до броска кубиков.');
-    const faces=[...(this.artifactFaces.get(data.playerId)??HERO_DICE[this.heroes.get(data.playerId)!])];
+    const faces=[...(this.artifactFaces.get(data.playerId)??heroFaces(this.balance,this.heroes.get(data.playerId)!))];
     const defs:Record<string,{kind:DiceFace['kind'];label:string}>={
       strike:{kind:'strike',label:`Удар ${value}`},
       heal:{kind:'heal',label:`Лечение ${value}`},
@@ -705,13 +721,13 @@ export class BattleSession {
     const entity=this.debugCombatant(data.id);
     if(entity.kind==='hero')throw new BattleError('Героя нельзя заменить монстром.');
     if(typeof data.foeId!=='string')throw new BattleError('Выберите противника.');
-    const def=FOES.find(foe=>foe.id===data.foeId&&foe.boss===(entity.kind==='boss'));
+    const def=this.foes.find(foe=>foe.id===data.foeId&&foe.boss===(entity.kind==='boss'));
     if(!def)throw new BattleError('Противник не найден в каталоге.');
     this.foeDefinitions.set(entity.id,def);
     entity.name=def.name;entity.maxHp=def.hp;entity.hp=def.hp;
     entity.alive=true;entity.shield=0;entity.mana=0;entity.effects=[];
     this.hitUntilTurn.delete(entity.id);this.foeFaceChanges.delete(entity.id);
-    if(def.name==='Тень'||hasFoeTrait(def,'Перед выходом: СамоУворот'))addEffect(entity,'dodge',1);
+    if(def.name==='Тень'||hasFoeTrait(def,'Перед выходом: СамоУворот'))addEffect(entity,'dodge',def.abilities?.dodge??1);
     this.log(`[ТЕСТ] ${entity.kind==='boss'?'Босс':'Монстр'} заменён на «${entity.name}» (${entity.hp} HP).`,'system',{type:'turn',targetId:entity.id});
   }
   debugExtendTurn(input:unknown){
@@ -818,7 +834,7 @@ export class BattleSession {
       this.hitUntilTurn.add(target.id);
     }
     let damage=options.poison?amount:Math.max(0,amount-armorFor(def));
-    if(!options.poison && hasFoeTrait(def,'Прочность:')) damage=Math.min(1,damage);
+    if(!options.poison && hasFoeTrait(def,'Прочность:')) damage=Math.min(def?.abilities?.sturdy??1,damage);
     const absorbed=options.poison?0:Math.min(target.shield,damage);
     if(!options.poison)target.shield-=absorbed;
     let applied=Math.min(target.hp,Math.max(0,damage-absorbed));
@@ -851,8 +867,8 @@ export class BattleSession {
       this.log(`${this.shown(target)} погибает.`,'system');
       if(target.kind==='hero')this.transferMonsters(target.id);
       if(def?.name==='Гнилец')for(const id of this.livingHeroes()){
-        const hero=this.actor(id)!;this.harm(hero,1,'Гнилец после смерти',{sourceId:target.id});
-        if(hero.alive)this.addStatus(hero,'poison',1,target.id);
+        const hero=this.actor(id)!;this.harm(hero,def.abilities?.deathStrike??1,'Гнилец после смерти',{sourceId:target.id});
+        if(hero.alive)this.addStatus(hero,'poison',def.abilities?.deathStrike??1,target.id);
       }
     }
     return applied;
@@ -941,13 +957,13 @@ export class BattleSession {
     clearEffect(c,'dodge'); // previous dodge lasts only until the start of the next own turn
     const regen=statusValue(c,'regeneration');
     const poison=statusValue(c,'poison');
-    if(regen>0)this.heal(c,Math.max(0,regen-poison),'Регенерация',c.id);
+    if(regen>0)this.heal(c,Math.max(0,regen-poison)*this.effect('regeneration','factor'),'Регенерация',c.id);
   }
   private applyEndOfTurn(c:CombatantSnapshot){
     if(!c.alive)return;
     const poison=statusValue(c,'poison');
     const regen=statusValue(c,'regeneration');
-    const net=Math.max(0,poison-regen);
+    const net=Math.max(0,poison-regen)*this.effect('poison','factor');
     if(net>0)this.harm(c,net,'Яд (конец хода)',{poison:true,sourceId:c.effects?.find(e=>e.kind==='poison')?.sourceId});
     clearEffect(c,'weakness');
     clearEffect(c,'paralysis');
@@ -974,11 +990,11 @@ export class BattleSession {
     if(!words.strike)return;
     // Weakness reduces the creature's CURRENT face before this action; it expires
     // after its own turn, not before the attack. This applies to both monsters and bosses.
-    const faceValue=Math.max(0,words.amount+(this.foeFaceChanges.get(enemy.id)??0)-statusValue(enemy,'weakness'));
-    const power=faceValue+(hasFoeTrait(def,'Пиявка:')?target.maxHp-target.hp:0);
+    const faceValue=Math.max(0,words.amount+(this.foeFaceChanges.get(enemy.id)??0)-statusValue(enemy,'weakness')*this.effect('weakness','factor'));
+    const power=faceValue+(hasFoeTrait(def,'Пиявка:')?(target.maxHp-target.hp)*(def.abilities?.leech??1):0);
     // Leech raises the value of the WHOLE face, not only the Strike word.
     let damage=power;
-    if(words.dying&&enemy.hp<enemy.maxHp/2)damage*=2;
+    if(words.dying&&enemy.hp<enemy.maxHp/2)damage*=def.abilities?.dying??2;
     const victimIds=words.allHeroes?this.livingHeroes():[target.id];
     const fullTargets=new Set(victimIds);
     if(words.scatter){
@@ -995,7 +1011,7 @@ export class BattleSession {
       if(words.paralysis)this.addStatus(victim,'paralysis',1,enemy.id);
     }
     if(words.decay||words.growth){
-      const delta=words.growth?1:-1;
+      const delta=words.growth?(def.abilities?.growth??1):-(def.abilities?.decay??1);
       const before=Math.max(0,words.amount+(this.foeFaceChanges.get(enemy.id)??0));
       const next=Math.max(-words.amount, (this.foeFaceChanges.get(enemy.id)??0)+delta);
       this.foeFaceChanges.set(enemy.id,next);
@@ -1020,7 +1036,7 @@ export class BattleSession {
     const def=this.foeDefinitions.get(monster.id);
     if(def?.name==='Надгробие')this.summon(playerId,1,monster.name);
     else this.attackByEnemy(monster,target);
-    if(monster.alive && def?.name==='Тень')this.addStatus(monster,'dodge',1,monster.id);
+    if(monster.alive && def?.name==='Тень')this.addStatus(monster,'dodge',def.abilities?.dodge??1,monster.id);
     if(monster.alive && hasFoeTrait(def,'Перемещение:')){
       const next=this.playerIds.slice(this.playerIds.indexOf(playerId)+1).concat(this.playerIds.slice(0,this.playerIds.indexOf(playerId))).find(id=>this.actor(id)?.alive);
       if(next){monster.ownerId=next;this.log(`${monster.name} перемещается к следующему герою.`,'system');}
@@ -1048,9 +1064,9 @@ export class BattleSession {
     this.attackByEnemy(boss,this.actor(chosen)!);
     if(boss.alive && boss.name==='Прокаженный'){
       for(const id of this.livingHeroes()){
-        const hero=this.actor(id)!;hero.maxHp=Math.max(1,hero.maxHp-1);
+        const hero=this.actor(id)!;hero.maxHp=Math.max(1,hero.maxHp-(def.abilities?.plague??1));
         hero.hp=Math.min(hero.hp,hero.maxHp);
-        this.log(`Чума: «${hero.name}» теряет 1 к максимальному здоровью.`,'action',{type:'strike',targetId:id});
+        this.log(`Чума: «${hero.name}» теряет ${def.abilities?.plague??1} к максимальному здоровью.`,'action',{type:'strike',targetId:id});
       }
     }
     if(boss.alive)this.applyEndOfTurn(boss);
@@ -1064,15 +1080,14 @@ export class BattleSession {
       // Paralysis adds «Боль» to every face for one turn. Its damage equals the
       // selected face's PRE-growth/decay value, and ordinary shields absorb it.
       if(source.alive && statusValue(source,'paralysis')>0 && action.value>0)
-        this.harm(source,action.value,'Паралич · Боль',{sourceId:source.effects?.find(e=>e.kind==='paralysis')?.sourceId});
+        this.harm(source,action.value*this.effect('paralysis','factor'),'Паралич · Боль',{sourceId:source.effects?.find(e=>e.kind==='paralysis')?.sourceId});
       const printed=this.faceFor(id,idx).label;
       const decay=printed.includes('Гниение');
       const growth=printed.includes('Рост');
       if(decay||growth){
         const map=decay?(this.decayedFaces.get(id)??new Map<number,number>()):(this.grownFaces.get(id)??new Map<number,number>());
         const before=action.value;
-        if(decay)map.set(idx,(map.get(idx)??0)+1);
-        else map.set(idx,(map.get(idx)??0)+1);
+        map.set(idx,(map.get(idx)??0)+this.effect(decay?'decay':'growth','step'));
         if(decay)this.decayedFaces.set(id,map);else this.grownFaces.set(id,map);
         const after=this.computedFaces(id)[idx]!.value;
         this.log(`${source.name}: «${decay?'Гниение':'Рост'}» меняет грань ${idx+1} после применения (${before} → ${after}).`,'system');

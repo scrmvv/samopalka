@@ -7,6 +7,7 @@ import './style.css';
 import './battle.css';
 import { HeroSprite } from './HeroSprite';
 import { BattleBoard } from './BattleBoard';
+import { Admin } from './Admin';
 
 type NetworkInfo = { port: number; radmin: string[]; addresses: string[] };
 type SessionResponse = { playerId: string; room: RoomSnapshot };
@@ -224,7 +225,7 @@ function App() {
       <section className="selection panel"><div className="section-title"><div><span className="overline">ВЫБОР ПЕРСОНАЖА</span><h2>{room.status === 'lobby' ? 'Выбери героя' : 'Твой отряд'}</h2></div><div className="selection-icon"><Swords size={19}/></div></div>
         <p className="muted selection-descr">{room.status === 'lobby' ? 'У каждого героя свои способности. Несколько игроков могут выбрать один класс.' : 'Выбранные герои готовы к спуску.'}</p>
         <div className="hero-grid">{HEROES.map(hero => { const claimed = room.players.some(p => p.id !== playerId && p.heroId === hero.id); const selected = me?.heroId === hero.id; const inParty = room.status !== 'lobby' && claimed; return <button key={hero.id} className={'hero ' + (selected ? 'hero-selected' : '') + (inParty ? ' hero-party' : '') + (room.status !== 'lobby' ? ' hero-locked' : '')} style={{ '--hero-color': hero.color } as React.CSSProperties} disabled={busy || room.status !== 'lobby'} onClick={() => void act('room:hero', hero.id as HeroId)}>
-          <div className="hero-symbol"><HeroSprite id={hero.id}/></div><div className="hero-body"><div className="hero-name">{hero.name}</div><div className="hero-title">{hero.title}</div><div className="hero-vitals"><span className="hero-vitals-label">ЗДОРОВЬЕ</span><span className="hero-hp">♥ <b>{hero.hp}</b></span></div></div>{selected && <span className="hero-check" title="Ваш герой"><Check size={13}/></span>}
+          <div className="hero-symbol"><HeroSprite id={hero.id}/></div><div className="hero-body"><div className="hero-name">{hero.name}</div><div className="hero-title">{hero.title}</div><div className="hero-vitals"><span className="hero-vitals-label">ЗДОРОВЬЕ</span><span className="hero-hp">♥ <b>{room.heroHp?.[hero.id] ?? hero.hp}</b></span></div></div>{selected && <span className="hero-check" title="Ваш герой"><Check size={13}/></span>}
         </button>; })}</div>
       </section></div>
       <section className="invite panel">
@@ -248,4 +249,4 @@ function App() {
   </div>;
 }
 
-createRoot(document.getElementById('root')!).render(<React.StrictMode><App/></React.StrictMode>);
+createRoot(document.getElementById('root')!).render(<React.StrictMode>{/^\/admin\/?$/.test(location.pathname)?<Admin/>:<App/>}</React.StrictMode>);
